@@ -13,6 +13,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
   :root{
     --navy-900:#0b3d24;
@@ -215,6 +217,27 @@
 
   footer{background:var(--navy-900);color:#aab4d0;text-align:center;padding:26px;font-size:12.5px;}
 
+  /* ---------- Student ID card (QR) ---------- */
+  .idcard{width:86mm;height:54mm;box-sizing:border-box;border:1px solid var(--navy-900);border-radius:3mm;overflow:hidden;background:#fff;color:#16241c;display:flex;flex-direction:column;-webkit-print-color-adjust:exact;print-color-adjust:exact;break-inside:avoid;page-break-inside:avoid;}
+  .idcard-head{background:var(--navy-900);color:#fff;display:flex;align-items:center;gap:2.5mm;padding:1.6mm 2.5mm;border-bottom:0.8mm solid var(--gold);}
+  .idcard-head img{width:7.5mm;height:7.5mm;border-radius:50%;object-fit:cover;background:#fff;flex:none;}
+  .idcard-head b{display:block;font-size:9pt;line-height:1.1;}
+  .idcard-head span{display:block;font-size:6pt;color:var(--gold);letter-spacing:.06em;text-transform:uppercase;}
+  .idcard-body{flex:1;display:flex;gap:2mm;padding:2mm 2.5mm;align-items:center;min-height:0;}
+  .idcard-photo{width:19mm;height:24mm;flex:none;}
+  .idcard-photo img{width:100%;height:100%;object-fit:cover;border:1px solid var(--line);border-radius:1mm;}
+  .idcard .nop{width:100%;height:100%;border:1px dashed var(--danger);color:var(--danger);font-size:6pt;font-weight:700;display:flex;align-items:center;justify-content:center;text-align:center;}
+  .idcard-info{flex:1;min-width:0;font-size:6.8pt;line-height:1.4;}
+  .idcard-info .nm{font-size:8.6pt;font-weight:700;color:var(--navy-900);margin-bottom:1mm;line-height:1.15;}
+  .idcard-info .row span{display:inline-block;width:12.5mm;color:var(--muted);}
+  .idcard-qr{width:22mm;flex:none;text-align:center;}
+  .idcard-qr img{width:21mm;height:21mm;display:block;margin:0 auto;}
+  .idcard-qr small{display:block;font-size:5.5pt;color:var(--muted);margin-top:0.6mm;}
+  .idcard-foot{background:var(--cream);font-size:5.5pt;text-align:center;padding:1mm;color:var(--muted);border-top:1px solid var(--line);}
+  .idcard-sheet{display:grid;grid-template-columns:repeat(2,86mm);gap:5mm;justify-content:center;}
+  .idmodal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;}
+  .idmodal-box{background:#fff;border-radius:10px;padding:20px;max-width:96vw;max-height:94vh;overflow:auto;}
+
   /* ---------- Print ---------- */
   #printArea{display:none;}
   @media print{
@@ -238,6 +261,8 @@
   </span>
   <span class="topbar-right">
     <a href="https://wa.me/923044890467" target="_blank" rel="noopener">WhatsApp</a>
+    <span class="topbar-sep">|</span>
+    <button type="button" class="topbar-link" data-goto="gate">In / Out</button>
     <span class="topbar-sep">|</span>
     <button type="button" class="topbar-link" data-goto="admin">Admin / Staff Login</button>
   </span>
@@ -545,6 +570,20 @@
     <div id="aboutUsOutput"></div>
   </section>
 
+  <!-- IN / OUT GATE -->
+  <section class="tab" id="tab-gate">
+    <div id="gateLoginWrap">
+      <div class="admin-gate">
+        <h2 style="margin-bottom:14px;">In / Out Gate</h2>
+        <p class="section-sub">Enter the gate password to start the QR scanner.</p>
+        <div id="gateLoginMsg"></div>
+        <div class="field" style="text-align:left;"><label>Password</label><input type="password" id="gatePassword" autocomplete="current-password" onkeydown="if(event.key==='Enter') gateSignIn()"></div>
+        <button class="btn-gold" style="width:100%;" onclick="gateSignIn()">Open Scanner</button>
+      </div>
+    </div>
+    <div id="gatePanelWrap" style="display:none;"></div>
+  </section>
+
   <!-- ADMIN -->
   <section class="tab" id="tab-admin">
     <div id="adminGateWrap">
@@ -623,22 +662,32 @@ try{
 // Change this to your own Gmail address if it ever needs to change.
 // ============================================================
 const ALLOWED_ADMIN_EMAIL = 'khalidsayal.3@gmail.com';
+// Gate (In / Out scanner) account: create this user in Firebase Console >
+// Authentication > Users (Email/Password). The password you set there is
+// the password typed on the In / Out page.
+const GATE_EMAIL = 'gate@quaidhighschoolksk.com';
+let isGate = false;
 let auth = null;
 if(firebaseReady){
   try{
     auth = firebase.auth();
     auth.onAuthStateChanged(user=>{
       if(user && user.email && user.email.toLowerCase() === ALLOWED_ADMIN_EMAIL.toLowerCase()){
-        isAdmin = true;
+        isAdmin = true; isGate = false;
         showAdminPanelUI();
+      } else if(user && user.email && user.email.toLowerCase() === GATE_EMAIL.toLowerCase()){
+        isAdmin = false; isGate = true;
+        showAdminGateUI();
+        gateAuthChanged();
       } else if(user){
         // Signed in with Google, but not the authorized account
         auth.signOut();
-        isAdmin = false;
+        isAdmin = false; isGate = false;
         showAdminGateUI('This Google account is not authorized as admin. Please sign in with the school\'s admin Google account.');
       } else {
-        isAdmin = false;
+        isAdmin = false; isGate = false;
         showAdminGateUI();
+        gateAuthChanged();
       }
     });
   }catch(e){ console.error('Firebase auth init failed', e); }
@@ -793,7 +842,7 @@ async function downloadElementAsPDF(elementId, filename, statusElId){
   }
 }
 
-let DB = { notifications:[], students:[], admissions:[], datesheet:[], results:[], enrollments:[], classSubjects:{}, aboutUs:[], complaints:[], studentAccounts:{}, academicCalendar:[], notes:[], pairingSchemes:[], attendance:[] };
+let DB = { notifications:[], students:[], admissions:[], datesheet:[], results:[], enrollments:[], classSubjects:{}, aboutUs:[], complaints:[], studentAccounts:{}, academicCalendar:[], notes:[], pairingSchemes:[], attendance:[], inoutDays:{} };
 let calSessionFilter = 'All';
 let isAdmin = false;
 let dsClassFilter = 'All';
@@ -868,6 +917,8 @@ function goto(tab){
   if(tab==='gazette') populateGazetteFilters();
   if(tab==='aboutus') renderAboutUs();
   if(tab==='admin') renderAdminPanel();
+  if(tab==='gate') openGateTab();
+  if(tab!=='gate' && typeof ioStream!=='undefined' && ioStream && IOP==='gt') stopInOutScanner();
 }
 
 /* ---------------- SITE SEARCH ---------------- */
@@ -1912,6 +1963,7 @@ let auPhotoDraft = ''; // base64 for the About Us form currently being filled
 
 function renderAdminPanel(){
   if(!isAdmin) return;
+  if(typeof stopInOutScanner==='function') stopInOutScanner();
   const wrap = document.getElementById('adminPanelWrap');
   wrap.innerHTML = `
     <div class="toolbar">
@@ -2243,9 +2295,39 @@ function renderAdminPanel(){
         <tr><th class="mono">Date</th><th>Class</th><th class="mono">Session</th><th>Roll No</th><th>Name</th><th>Status</th><th>Marked By</th><th></th></tr>
         ${[...DB.attendance].sort((a,b)=>new Date(b.date)-new Date(a.date)).map(a=>{
           const stu = DB.students.find(s=>{ const en = DB.enrollments.find(e=>e.rollNo===a.rollNo && e.session===a.session); return en && en.studentId===s.id; });
-          return `<tr><td class="mono">${fmtDate(a.date)}</td><td>${esc(a.className)}</td><td class="mono">${esc(a.session)}</td><td class="mono">${esc(a.rollNo)}</td><td>${esc(stu?stu.name:'-')}</td><td style="color:${a.status==='absent'?'var(--danger)':'var(--success)'};font-weight:700;">${a.status==='absent'?'Absent':'Present'}</td><td>${a.source==='face'?'Face Recognition':'Manual'}</td><td><button class="tag-btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteAttendanceEntry('${esc(a.id)}')">Remove</button></td></tr>`;
+          return `<tr><td class="mono">${fmtDate(a.date)}</td><td>${esc(a.className)}</td><td class="mono">${esc(a.session)}</td><td class="mono">${esc(a.rollNo)}</td><td>${esc(stu?stu.name:'-')}</td><td style="color:${a.status==='absent'?'var(--danger)':'var(--success)'};font-weight:700;">${a.status==='absent'?'Absent':'Present'}</td><td>${a.source==='face'?'Face Recognition':(a.source==='qr'?'QR Code':'Manual')}</td><td><button class="tag-btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteAttendanceEntry('${esc(a.id)}')">Remove</button></td></tr>`;
         }).join('')}
       </table>` : '<div class="empty">No attendance records yet.</div>'}
+    </div>
+
+    <div class="admin-block">
+      <h3>In / Out Scanner (QR + Face)</h3>
+      <p class="note-inline" style="margin:-6px 0 14px;">Start the camera <b>once</b> and leave it on. A student's first scan of the day saves <b>In</b>, the next scan saves <b>Out</b>, automatically. For the school gate use the separate <b>In / Out</b> link at the top of the site (password protected) &mdash; this block is for testing and office use.</p>
+      ${inOutScannerHTML('io')}
+    </div>
+
+    <div class="admin-block">
+      <h3 id="ioRecTitle">In / Out Records</h3>
+      <p class="note-inline" style="margin:-6px 0 14px;">Arrival (In) and leaving (Out) time of every student, one line per student per day. Pick a date to load it.</p>
+      <div class="row-2">
+        <div class="field"><label>Date</label><input type="date" id="ioRecDate" value="${new Date().toISOString().slice(0,10)}" oninput="renderInOutRecords()"></div>
+        <div class="field"><label>Class</label><select id="ioRecClass" onchange="renderInOutRecords()">${classOptionsHTML()}</select></div>
+      </div>
+      <div style="margin:6px 0 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <button type="button" class="tag-btn" onclick="inoutToAttendance()">Add this date's In students to Attendance as Present</button>
+        <span id="ioAttMsg" class="note-inline"></span>
+      </div>
+      <div id="inoutRecordsWrap"></div>
+    </div>
+
+    <div class="admin-block">
+      <h3>Student ID Cards (with QR)</h3>
+      <p class="note-inline" style="margin:-6px 0 14px;">Every student's card is made automatically from their profile, photo, roll no and class, with a QR code for In / Out. Pick a session and class to see all cards and print them together. A single card also opens right after you save a student or an enrollment, or from the Card button in the Enrollments table.</p>
+      <div class="row-2">
+        <div class="field"><label>Session / Year</label><input id="cardSession" value="${new Date().getFullYear()}" oninput="renderCardsPreview()"></div>
+        <div class="field"><label>Class</label><select id="cardClass" onchange="renderCardsPreview()">${classOptionsHTML()}</select></div>
+      </div>
+      <div id="cardsPreviewWrap"></div>
     </div>
 
     <div class="admin-block">
@@ -2338,6 +2420,7 @@ function renderAdminPanel(){
             <td>
               <button class="tag-btn ghost" style="padding:4px 10px;font-size:12px;" onclick="editEnrollment('${esc(en.id)}')">Edit</button>
               <button class="tag-btn" style="padding:4px 10px;font-size:12px;" onclick="adminViewSlip('${esc(en.id)}')">View Slip</button>
+              <button class="tag-btn ghost" style="padding:4px 10px;font-size:12px;" onclick="openStudentCard('${esc(en.studentId)}','${esc(en.id)}')">Card</button>
               <button class="tag-btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteEnrollment('${esc(en.id)}')">Remove</button>
             </td>
           </tr>`;
@@ -2346,7 +2429,8 @@ function renderAdminPanel(){
       })()}
     </div>
   `;
-
+  renderInOutRecords();
+  renderCardsPreview();
 
   document.getElementById('aboutUsForm').addEventListener('submit', async e=>{
     e.preventDefault();
@@ -2395,6 +2479,7 @@ function renderAdminPanel(){
     await setData('students', DB.students);
     photoDraft='';
     renderAdminPanel();
+    openStudentCard(record.id, null);
   });
 
   document.getElementById('enrollForm').addEventListener('submit', async e=>{
@@ -2415,6 +2500,7 @@ function renderAdminPanel(){
     if(existingIdx>=0) DB.enrollments[existingIdx] = record; else DB.enrollments.push(record);
     await setData('enrollments', DB.enrollments);
     renderAdminPanel();
+    openStudentCard(studentId, record.id);
   });
   document.getElementById('resultForm').addEventListener('submit', async e=>{
     e.preventDefault();
@@ -3195,6 +3281,514 @@ async function deleteAttendanceEntry(id){
   DB.attendance = DB.attendance.filter(a=>a.id!==id);
   await setData('attendance', DB.attendance);
   renderAdminPanel();
+}
+
+/* ---------------- STUDENT ID CARD + QR ----------------
+   The QR code on each card holds "QHSKSK:" + the student's id. The
+   In/Out scanner reads it and looks the student up, so the QR never
+   changes even if the roll no / class changes next year. ---------------- */
+function studentQRText(stu){ return 'QHSKSK:' + stu.id; }
+
+function qrDataUrl(text, size){
+  if(typeof QRCode === 'undefined') return '';
+  const holder = document.createElement('div');
+  holder.style.cssText = 'position:fixed;left:-9999px;top:0;';
+  document.body.appendChild(holder);
+  try{
+    new QRCode(holder, { text, width: size||220, height: size||220, correctLevel: QRCode.CorrectLevel.M });
+    const cv = holder.querySelector('canvas');
+    if(cv) return cv.toDataURL('image/png');
+    const im = holder.querySelector('img');
+    return im ? im.src : '';
+  }catch(e){ return ''; }
+  finally{ holder.remove(); }
+}
+
+function latestEnrollmentFor(studentId){
+  return DB.enrollments.filter(e=>e.studentId===studentId)
+    .sort((a,b)=>(b.session||'').localeCompare(a.session||''))[0] || null;
+}
+
+function studentCardHTML(stu, en){
+  const qr = qrDataUrl(studentQRText(stu), 220);
+  return `<div class="idcard">
+    <div class="idcard-head"><img src="${SCHOOL_LOGO}" alt=""><div><b>Quaid High School KSK</b><span>Student Identity Card${en?' &middot; Session '+esc(en.session):''}</span></div></div>
+    <div class="idcard-body">
+      <div class="idcard-photo">${stu.photo?`<img src="${stu.photo}" alt="">`:'<div class="nop">NO PHOTO</div>'}</div>
+      <div class="idcard-info">
+        <div class="nm">${esc(stu.name)}</div>
+        <div class="row"><span>Father</span>${esc(stu.fatherName||'-')}</div>
+        <div class="row"><span>Class</span>${en?esc(en.className):'-'}</div>
+        <div class="row"><span>Roll No</span>${en?esc(en.rollNo):'-'}</div>
+        <div class="row"><span>Parent Ph.</span>${esc(stu.parentPhone||'-')}</div>
+      </div>
+      <div class="idcard-qr">${qr?`<img src="${qr}" alt="QR">`:'<div class="nop" style="height:21mm;">QR not available</div>'}<small>Scan for In / Out</small></div>
+    </div>
+    <div class="idcard-foot">School Contact: 0304-4890467 &middot; If found, please return to school</div>
+  </div>`;
+}
+
+function closeStudentCard(){ const m = document.getElementById('idModal'); if(m) m.remove(); }
+
+function openStudentCard(studentId, enrollmentId){
+  const stu = DB.students.find(s=>s.id===studentId);
+  if(!stu) return;
+  let en = enrollmentId ? DB.enrollments.find(e=>e.id===enrollmentId) : null;
+  if(!en) en = latestEnrollmentFor(studentId);
+  closeStudentCard();
+  const m = document.createElement('div');
+  m.className = 'idmodal';
+  m.id = 'idModal';
+  m.innerHTML = `<div class="idmodal-box">
+    <h3 style="margin:0 0 4px;">Student Card</h3>
+    <p class="note-inline" style="margin:0 0 12px;">${en ? 'Card is ready &mdash; print it and hand it to the student.' : 'Roll no and class are not added yet. Enroll the student for a session and the card will include them.'}</p>
+    <div style="display:flex;justify-content:center;">${studentCardHTML(stu, en)}</div>
+    <div style="display:flex;gap:8px;justify-content:center;margin-top:14px;flex-wrap:wrap;">
+      <button type="button" class="btn-gold" onclick="printStudentCard('${esc(stu.id)}','${en?esc(en.id):''}')">Print Card</button>
+      <button type="button" class="tag-btn ghost" onclick="closeStudentCard()">Close</button>
+    </div>
+  </div>`;
+  m.addEventListener('click', e=>{ if(e.target===m) closeStudentCard(); });
+  document.body.appendChild(m);
+}
+
+function printStudentCard(studentId, enrollmentId){
+  const stu = DB.students.find(s=>s.id===studentId);
+  if(!stu) return;
+  const en = enrollmentId ? DB.enrollments.find(e=>e.id===enrollmentId) : latestEnrollmentFor(studentId);
+  printHTML('<div class="idcard-sheet" style="grid-template-columns:86mm;">' + studentCardHTML(stu, en) + '</div>');
+}
+
+let lastCardsSheetHTML = '';
+function renderCardsPreview(){
+  const wrap = document.getElementById('cardsPreviewWrap');
+  if(!wrap) return;
+  const session = document.getElementById('cardSession').value.trim();
+  const className = document.getElementById('cardClass').value;
+  if(!session || !className){ wrap.innerHTML = '<p class="note-inline">Select a session and class to see its cards.</p>'; lastCardsSheetHTML=''; return; }
+  const list = DB.enrollments.filter(en=>en.session===session && en.className===className)
+    .sort((a,b)=>(parseInt(a.rollNo,10)||0)-(parseInt(b.rollNo,10)||0));
+  if(!list.length){ wrap.innerHTML = '<p class="note-inline">No students enrolled in this class/session yet.</p>'; lastCardsSheetHTML=''; return; }
+  const cards = list.map(en=>{ const stu = DB.students.find(s=>s.id===en.studentId); return stu ? studentCardHTML(stu, en) : ''; }).join('');
+  lastCardsSheetHTML = '<div class="idcard-sheet">' + cards + '</div>';
+  wrap.innerHTML = `<div style="margin:6px 0 12px;"><button type="button" class="btn-gold" onclick="printAllCards()">Print All Cards (${list.length})</button></div>
+    <div class="idcard-sheet" style="justify-content:start;">${cards}</div>`;
+}
+function printAllCards(){ if(lastCardsSheetHTML) printHTML(lastCardsSheetHTML); }
+
+/* ---------------- IN / OUT SCANNER (QR + face, camera stays on) ----------------
+   One camera feed. Each tick looks for a QR code and (optionally) a
+   registered face. A student's first scan of the day saves In, the next
+   saves Out (at least 2 minutes later, so a double scan can't count as
+   Out). Records are stored ONE DOCUMENT PER DAY ("inout_YYYY-MM-DD") so
+   the database never grows into one giant document, and every scan
+   re-reads that day first so two gates / the office can't overwrite each
+   other. The same scanner is used by the admin panel (prefix "io") and
+   the password-protected gate page (prefix "gt"). ---------------- */
+let IOP = 'io';
+function $p(id){ return document.getElementById(IOP + id); }
+let ioStream = null, ioTimer = null, ioRefreshTimer = null, ioBusy = false, ioMatcher = null, ioFaceOn = false, ioTickN = 0;
+let ioSeen = {};
+const IO_MIN_GAP_MS = 2 * 60 * 1000;
+
+function inoutKey(date){ return 'inout_' + date; }
+function todayLocal(){
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+function nowTimeStr(){ return new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',hour12:false}); }
+
+// Read/write helpers that REPORT failure (setData/getData swallow errors,
+// which would be dangerous here: a failed read must never turn into an
+// overwrite of the day's records).
+async function ioReadDay(date){
+  if(firebaseReady){
+    try{
+      const d = await fsDb.collection('school_data').doc(inoutKey(date)).get();
+      return { ok:true, list: d.exists ? (d.data().value || []) : [] };
+    }catch(e){ console.error('In/Out read failed', e); return { ok:false, list:[] }; }
+  }
+  return { ok:true, list: await getData(inoutKey(date), []) };
+}
+async function ioSaveDay(date, list){
+  if(firebaseReady){
+    try{ await fsDb.collection('school_data').doc(inoutKey(date)).set({ value: list }); return true; }
+    catch(e){ console.error('In/Out save failed', e); return false; }
+  }
+  await setData(inoutKey(date), list);
+  return true;
+}
+
+function inOutScannerHTML(p, extraButtons){
+  return `
+    <div class="row-2">
+      <div class="field"><label>Session / Year</label><input id="${p}Session" placeholder="e.g. 2026" value="${new Date().getFullYear()}"></div>
+      <div class="field"><label>Mode</label>
+        <select id="${p}Mode">
+          <option value="auto">Auto &mdash; first scan In, next scan Out</option>
+          <option value="in">In only (entrance)</option>
+          <option value="out">Out only (exit)</option>
+        </select>
+      </div>
+    </div>
+    <div class="row-2">
+      <div class="field"><label>Camera</label>
+        <select id="${p}Cam"><option value="user">Front camera / laptop webcam</option><option value="environment">Back camera (phone)</option></select>
+      </div>
+      <div class="field"><label>&nbsp;</label>
+        <label style="margin:0;"><input type="checkbox" id="${p}UseFace" checked style="width:auto;"> Also recognize registered faces</label>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 10px;">
+      <button type="button" class="btn-gold" onclick="startInOutScanner('${p}')">Start Camera</button>
+      <button type="button" class="tag-btn danger" onclick="stopInOutScanner()">Stop Camera</button>
+      ${extraButtons || ''}
+    </div>
+    <video id="${p}Video" autoplay muted playsinline style="width:100%;max-width:420px;border-radius:8px;background:#000;display:block;"></video>
+    <canvas id="${p}Canvas" style="display:none;"></canvas>
+    <div id="${p}Status" style="margin-top:8px;"></div>
+    <div id="${p}Count" class="note-inline" style="margin-top:6px;"></div>
+    <div id="${p}Banner" style="margin-top:10px;"></div>
+    <div id="${p}Log" style="margin-top:8px;"></div>
+    <div class="field" style="margin-top:14px;max-width:340px;">
+      <label>Manual (if a card is lost) &mdash; Roll No</label>
+      <div style="display:flex;gap:8px;"><input id="${p}ManualRoll" placeholder="e.g. 1024"><button type="button" class="tag-btn" onclick="ioManualMark('${p}')">Mark</button></div>
+    </div>`;
+}
+
+function ioBeep(ok){
+  try{
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC) return;
+    const ctx = ioBeep.ctx || (ioBeep.ctx = new AC());
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = ok ? 880 : 220; g.gain.value = 0.08;
+    o.connect(g); g.connect(ctx.destination);
+    o.start(); o.stop(ctx.currentTime + (ok ? 0.12 : 0.3));
+  }catch(e){}
+}
+
+function ioShowBanner(kind, html, photo){
+  const el = $p('Banner');
+  if(!el) return;
+  const styles = {
+    in:'background:#eaf5ee;border:2px solid var(--success);color:var(--success);',
+    out:'background:#fff4e0;border:2px solid var(--gold-dark);color:#8a5a00;',
+    warn:'background:#f4f7f4;border:1px solid var(--line);color:var(--muted);',
+    err:'background:#fdf1f0;border:2px solid var(--danger);color:var(--danger);'
+  };
+  const pic = photo ? `<img src="${photo}" alt="" style="width:64px;height:80px;object-fit:cover;border-radius:4px;flex:none;">` : '';
+  el.innerHTML = `<div style="${styles[kind]}padding:12px 14px;border-radius:8px;font-size:18px;font-weight:700;display:flex;gap:12px;align-items:center;">${pic}<div>${html}</div></div>`;
+}
+
+function ioUpdateCount(list, date){
+  const el = $p('Count');
+  if(!el) return;
+  const inN = list.filter(a=>a.inTime).length, outN = list.filter(a=>a.outTime).length;
+  el.textContent = 'Today (' + date + '): In ' + inN + ' \u00b7 Out ' + outN;
+}
+
+function enrollmentForStudent(studentId, session){
+  const list = DB.enrollments.filter(e=>e.studentId===studentId && e.session===session);
+  return list[list.length-1] || null;
+}
+
+async function handleInOutScan(studentId, source){
+  const now = Date.now();
+  if(source !== 'manual'){
+    if(ioSeen[studentId] && now - ioSeen[studentId] < 6000) return;
+    ioSeen[studentId] = now;
+  }
+  const stu = DB.students.find(s=>s.id===studentId);
+  if(!stu){ ioShowBanner('err','Unknown card &mdash; student not found.'); ioBeep(false); return; }
+  const session = $p('Session').value.trim();
+  const mode = $p('Mode').value;
+  const en = enrollmentForStudent(studentId, session);
+  const nm = esc(stu.name);
+  if(!en){ ioShowBanner('err', nm + '<br><small>Not enrolled for session ' + esc(session) + '</small>', stu.photo); ioBeep(false); return; }
+  const date = todayLocal();
+  const r = await ioReadDay(date);
+  if(!r.ok){ ioSeen[studentId] = 0; ioShowBanner('err','Could not read today\'s records &mdash; check the internet and scan again.'); ioBeep(false); return; }
+  const day = r.list;
+  let rec = day.find(a=>a.rollNo===en.rollNo && a.session===en.session && a.className===en.className);
+  let action = mode;
+  if(mode === 'auto'){
+    if(!rec || !rec.inTime) action = 'in';
+    else if(!rec.outTime){
+      if(rec.inTs && now - rec.inTs < IO_MIN_GAP_MS){ ioShowBanner('warn', nm + '<br><small>Already marked IN at ' + esc(rec.inTime) + '</small>', stu.photo); return; }
+      action = 'out';
+    } else {
+      ioShowBanner('warn', nm + '<br><small>Already IN (' + esc(rec.inTime) + ') and OUT (' + esc(rec.outTime) + ') today</small>', stu.photo);
+      return;
+    }
+  } else if(action === 'in' && rec && rec.inTime){
+    ioShowBanner('warn', nm + '<br><small>Already marked IN at ' + esc(rec.inTime) + '</small>', stu.photo); return;
+  } else if(action === 'out' && rec && rec.outTime){
+    ioShowBanner('warn', nm + '<br><small>Already marked OUT at ' + esc(rec.outTime) + '</small>', stu.photo); return;
+  }
+  if(!rec){
+    rec = { id: uid(), session: en.session, className: en.className, date, rollNo: en.rollNo, studentId, inTime:'', outTime:'', source };
+    day.push(rec);
+  }
+  const t = nowTimeStr();
+  if(action === 'in'){ rec.inTime = t; rec.inTs = now; } else { rec.outTime = t; rec.outTs = now; }
+  rec.source = source;
+  const saved = await ioSaveDay(date, day);
+  if(!saved){
+    ioSeen[studentId] = 0;
+    ioShowBanner('err', nm + '<br><small>NOT SAVED &mdash; sign-in or database permission problem. Tell the office.</small>', stu.photo);
+    ioBeep(false);
+    return;
+  }
+  DB.inoutDays[date] = day;
+  const label = action === 'in' ? 'IN' : 'OUT';
+  ioShowBanner(action, label + ' &#10003; ' + nm + '<br><small>Roll ' + esc(en.rollNo) + ' &middot; Class ' + esc(en.className) + ' &middot; ' + t + '</small>', stu.photo);
+  ioBeep(true);
+  ioUpdateCount(day, date);
+  const log = $p('Log');
+  if(log){
+    const line = document.createElement('p');
+    line.className = action === 'in' ? 'msg-ok' : 'note-inline';
+    line.style.margin = '3px 0';
+    line.textContent = label + ': ' + stu.name + ' (Roll ' + en.rollNo + ') at ' + t + ' [' + (source==='qr'?'QR':source==='face'?'Face':'Manual') + ']';
+    log.prepend(line);
+  }
+  if(IOP === 'io') renderInOutRecords();
+}
+
+async function ioManualMark(p){
+  IOP = p;
+  const roll = $p('ManualRoll').value.trim();
+  const session = $p('Session').value.trim();
+  if(!roll){ return; }
+  const en = DB.enrollments.find(e=>e.rollNo===roll && e.session===session);
+  if(!en){ ioShowBanner('err','No student with Roll No ' + esc(roll) + ' in session ' + esc(session)); ioBeep(false); return; }
+  await handleInOutScan(en.studentId, 'manual');
+  $p('ManualRoll').value = '';
+}
+
+function ioBuildMatcher(session){
+  if(typeof faceapi === 'undefined') return null;
+  const labeled = [];
+  DB.enrollments.filter(en=>en.session===session).forEach(en=>{
+    const stu = DB.students.find(s=>s.id===en.studentId);
+    if(stu && stu.faceDescriptor && stu.faceDescriptor.length===128){
+      labeled.push(new faceapi.LabeledFaceDescriptors(stu.id, [new Float32Array(stu.faceDescriptor)]));
+    }
+  });
+  return labeled.length ? new faceapi.FaceMatcher(labeled, 0.5) : null;
+}
+
+// A gate left running for days must still see newly added students.
+async function ioRefreshData(){
+  try{
+    DB.students = await getData('students', DB.students);
+    DB.enrollments = await getData('enrollments', DB.enrollments);
+    if(ioFaceOn){ const m = ioBuildMatcher($p('Session').value.trim()); if(m) ioMatcher = m; }
+  }catch(e){}
+}
+
+async function startInOutScanner(p){
+  IOP = p || IOP;
+  const st = $p('Status');
+  const session = $p('Session').value.trim();
+  if(!session){ st.innerHTML = '<div class="msg-err">Enter the session first.</div>'; return; }
+  if(ioStream){ st.innerHTML = '<p class="note-inline">Camera is already on.</p>'; return; }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    st.innerHTML = '<div class="msg-err">This browser/connection does not allow camera access (needs HTTPS).</div>'; return;
+  }
+  const video = $p('Video');
+  try{
+    ioStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: $p('Cam').value } }, audio: false });
+    video.srcObject = ioStream;
+    await video.play();
+  }catch(err){
+    ioStream = null;
+    st.innerHTML = '<div class="msg-err">Could not access the camera: ' + esc(err.message||'permission denied') + '</div>';
+    return;
+  }
+  ioSeen = {}; ioMatcher = null; ioFaceOn = false; ioTickN = 0;
+  const qrOk = (typeof jsQR !== 'undefined');
+  let faceNote = '';
+  if($p('UseFace').checked){
+    const m = ioBuildMatcher(session);
+    if(m){
+      const ok = await ensureFaceModelsLoaded(IOP + 'Status');
+      if(ok){ ioMatcher = m; ioFaceOn = true; }
+      else faceNote = ' (face recognition could not load &mdash; QR only)';
+    }
+  }
+  if(!qrOk && !ioFaceOn){
+    st.innerHTML = '<div class="msg-err">QR scanner library did not load (check your internet connection) &mdash; refresh the page.</div>';
+  } else {
+    st.innerHTML = '<p class="note-inline">Camera on &mdash; ' + (qrOk ? 'QR' : '') + (qrOk && ioFaceOn ? ' + ' : '') + (ioFaceOn ? 'face' : '') + ' scanning is automatic. Leave it running.' + faceNote + '</p>';
+  }
+  const today = todayLocal();
+  const r = await ioReadDay(today);
+  if(r.ok) ioUpdateCount(r.list, today);
+  else st.innerHTML += '<div class="msg-err">Could not read today\'s records &mdash; check the internet connection.</div>';
+  ioTimer = setInterval(ioScanTick, 500);
+  ioRefreshTimer = setInterval(ioRefreshData, 10 * 60 * 1000);
+}
+
+function stopInOutScanner(){
+  if(ioTimer){ clearInterval(ioTimer); ioTimer = null; }
+  if(ioRefreshTimer){ clearInterval(ioRefreshTimer); ioRefreshTimer = null; }
+  if(ioStream){ ioStream.getTracks().forEach(t=>t.stop()); ioStream = null; }
+  ioMatcher = null; ioFaceOn = false; ioBusy = false;
+  const video = $p('Video');
+  if(video) video.srcObject = null;
+  const st = $p('Status');
+  if(st) st.innerHTML = '';
+}
+
+async function ioScanTick(){
+  if(ioBusy) return;
+  const video = $p('Video');
+  if(!video || video.readyState < 2 || !video.videoWidth) return;
+  ioBusy = true;
+  try{
+    if(typeof jsQR !== 'undefined'){
+      const cv = $p('Canvas');
+      const scale = Math.min(1, 640 / video.videoWidth);
+      cv.width = Math.round(video.videoWidth * scale);
+      cv.height = Math.round(video.videoHeight * scale);
+      const ctx = cv.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(video, 0, 0, cv.width, cv.height);
+      const img = ctx.getImageData(0, 0, cv.width, cv.height);
+      const code = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+      if(code && code.data){
+        if(code.data.indexOf('QHSKSK:') === 0){
+          await handleInOutScan(code.data.slice(7), 'qr');
+        } else if(!ioSeen.__bad || Date.now() - ioSeen.__bad > 4000){
+          ioSeen.__bad = Date.now();
+          ioShowBanner('err', 'This QR is not a Quaid High School card.');
+          ioBeep(false);
+        }
+      }
+    }
+    ioTickN++;
+    if(ioFaceOn && ioMatcher && ioTickN % 4 === 0){
+      const dets = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptors();
+      for(const d of dets){
+        const m = ioMatcher.findBestMatch(d.descriptor);
+        if(m.label !== 'unknown') await handleInOutScan(m.label, 'face');
+      }
+    }
+  }catch(err){ /* skip this tick */ }
+  ioBusy = false;
+}
+
+/* ---- admin: In / Out records (one day at a time) ---- */
+let ioRecToken = 0;
+async function renderInOutRecords(){
+  const wrap = document.getElementById('inoutRecordsWrap');
+  if(!wrap) return;
+  const dEl = document.getElementById('ioRecDate'), cEl = document.getElementById('ioRecClass');
+  const date = dEl ? dEl.value : '';
+  const cls = cEl ? cEl.value : '';
+  const title = document.getElementById('ioRecTitle');
+  if(!date){ if(title) title.textContent = 'In / Out Records'; wrap.innerHTML = '<p class="note-inline">Pick a date to see its In / Out records.</p>'; return; }
+  const token = ++ioRecToken;
+  wrap.innerHTML = '<p class="note-inline">Loading&hellip;</p>';
+  const r = await ioReadDay(date);
+  if(token !== ioRecToken) return;
+  if(!r.ok){ wrap.innerHTML = '<div class="msg-err">Could not load the records for this date.</div>'; return; }
+  DB.inoutDays[date] = r.list;
+  const list = r.list.filter(a=>!cls || a.className===cls).sort((a,b)=>(a.inTime||'').localeCompare(b.inTime||''));
+  if(title) title.textContent = 'In / Out Records (' + list.length + ')';
+  if(!list.length){ wrap.innerHTML = '<div class="empty">No In / Out records for this selection.</div>'; return; }
+  wrap.innerHTML = `<table>
+    <tr><th class="mono">Date</th><th>Class</th><th class="mono">Roll No</th><th>Name</th><th class="mono">In</th><th class="mono">Out</th><th>Marked By</th><th></th></tr>
+    ${list.map(a=>{
+      const stu = DB.students.find(s=>s.id===a.studentId) || DB.students.find(s=>{ const en = DB.enrollments.find(e=>e.rollNo===a.rollNo && e.session===a.session); return en && en.studentId===s.id; });
+      const by = a.source==='qr' ? 'QR Code' : (a.source==='face' ? 'Face Recognition' : 'Manual');
+      return `<tr><td class="mono">${fmtDate(a.date||date)}</td><td>${esc(a.className)}</td><td class="mono">${esc(a.rollNo)}</td><td>${esc(stu?stu.name:'-')}</td><td class="mono" style="color:var(--success);font-weight:700;">${esc(a.inTime||'-')}</td><td class="mono" style="color:#8a5a00;font-weight:700;">${esc(a.outTime||'-')}</td><td>${by}</td><td><button class="tag-btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteInOutEntry('${esc(a.id)}','${esc(date)}')">Remove</button></td></tr>`;
+    }).join('')}
+  </table>`;
+}
+
+async function deleteInOutEntry(id, date){
+  const r = await ioReadDay(date);
+  if(!r.ok) return;
+  await ioSaveDay(date, r.list.filter(a=>a.id!==id));
+  renderInOutRecords();
+}
+
+// Optional, admin-only: copy a day's In students into Attendance as Present.
+async function inoutToAttendance(){
+  const date = document.getElementById('ioRecDate').value;
+  const msg = document.getElementById('ioAttMsg');
+  if(!date){ msg.textContent = 'Pick a date first.'; return; }
+  const r = await ioReadDay(date);
+  if(!r.ok){ msg.textContent = 'Could not load that date.'; return; }
+  const list = r.list.filter(a=>a.inTime);
+  if(!list.length){ msg.textContent = 'No In records on this date.'; return; }
+  list.forEach(a=>{
+    DB.attendance = DB.attendance.filter(x=>!(x.rollNo===a.rollNo && x.date===date && x.session===a.session && x.className===a.className));
+    DB.attendance.push({ id: uid(), session: a.session, className: a.className, date, rollNo: a.rollNo, status:'present', source: a.source==='face' ? 'face' : (a.source==='qr' ? 'qr' : 'manual') });
+  });
+  await setData('attendance', DB.attendance);
+  const keepClass = document.getElementById('ioRecClass').value;
+  renderAdminPanel();
+  document.getElementById('ioRecDate').value = date;
+  document.getElementById('ioRecClass').value = keepClass;
+  renderInOutRecords();
+  document.getElementById('ioAttMsg').textContent = list.length + ' student(s) marked Present in Attendance for ' + date + '.';
+}
+
+/* ---------------- IN / OUT GATE PAGE (password) ----------------
+   The password is the password of a real Firebase sign-in account
+   (GATE_EMAIL), so the database itself only accepts gate writes from
+   someone who knows it. ---------------- */
+function gateAuthChanged(){
+  const tab = document.getElementById('tab-gate');
+  if(isGate){ if(tab && tab.classList.contains('active')) showGatePanelUI(); }
+  else showGateLoginUI();
+}
+function showGateLoginUI(msg){
+  if(IOP === 'gt') stopInOutScanner();
+  const lw = document.getElementById('gateLoginWrap'), pw = document.getElementById('gatePanelWrap');
+  if(lw) lw.style.display = 'block';
+  if(pw) pw.style.display = 'none';
+  const m = document.getElementById('gateLoginMsg');
+  if(m) m.innerHTML = msg ? '<div class="msg-err">' + esc(msg) + '</div>' : '';
+}
+function showGatePanelUI(){
+  const lw = document.getElementById('gateLoginWrap'), pw = document.getElementById('gatePanelWrap');
+  if(!lw || !pw) return;
+  lw.style.display = 'none';
+  pw.style.display = 'block';
+  if(!pw.dataset.built){
+    pw.innerHTML = '<div class="toolbar"><h2>In / Out Gate</h2></div>' +
+      '<p class="note-inline" style="margin:-10px 0 14px;">The camera starts by itself. Students hold the QR on their card in front of it &mdash; the result shows below with a beep.</p>' +
+      inOutScannerHTML('gt', '<button type="button" class="tag-btn ghost" onclick="gateLock()">Lock &amp; Sign Out</button>');
+    pw.dataset.built = '1';
+  }
+  IOP = 'gt';
+  if(!ioStream) startInOutScanner('gt');
+}
+async function gateSignIn(){
+  const input = document.getElementById('gatePassword');
+  const pw = input.value;
+  if(!auth){ showGateLoginUI('Firebase is not configured, so sign-in is unavailable.'); return; }
+  if(!pw){ showGateLoginUI('Enter the password.'); return; }
+  try{
+    await auth.signInWithEmailAndPassword(GATE_EMAIL, pw);
+    input.value = '';
+  }catch(err){
+    const c = err && err.code || '';
+    if(c === 'auth/operation-not-allowed') showGateLoginUI('Email/Password sign-in is not enabled in Firebase yet.');
+    else if(c === 'auth/too-many-requests') showGateLoginUI('Too many attempts. Wait a few minutes and try again.');
+    else showGateLoginUI('Wrong password (or the gate account is not set up yet).');
+  }
+}
+function gateLock(){
+  stopInOutScanner();
+  if(auth) auth.signOut();
+}
+function openGateTab(){
+  if(isGate) showGatePanelUI(); else showGateLoginUI();
 }
 
 async function deleteDatesheetEntry(id){
