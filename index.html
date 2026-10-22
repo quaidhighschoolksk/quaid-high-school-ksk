@@ -3376,7 +3376,8 @@ function cardsListFor(session, className){
     .sort((a,b)=> order(a.className)-order(b.className) || (parseInt(a.rollNo,10)||0)-(parseInt(b.rollNo,10)||0))
     .map(en=>({ en, stu: DB.students.find(s=>s.id===en.studentId) })).filter(x=>x.stu);
 }
-function renderCardsPreview(){
+async function renderCardsPreview(){
+  if(typeof QRCode === 'undefined') await ensureQRCodeLib();
   const wrap = document.getElementById('cardsPreviewWrap');
   if(!wrap) return;
   const session = document.getElementById('cardSession').value.trim();
@@ -3453,6 +3454,33 @@ async function downloadCardsPDF(allClasses){
    re-reads that day first so two gates / the office can't overwrite each
    other. The same scanner is used by the admin panel (prefix "io") and
    the password-protected gate page (prefix "gt"). ---------------- */
+/* Backup loaders: if a library's main CDN is blocked or slow (school internet),
+   try other CDNs one by one. */
+function loadScriptOnce(url){
+  return new Promise(res=>{
+    const el = document.createElement('script');
+    el.src = url; el.onload = ()=>res(true); el.onerror = ()=>{ el.remove(); res(false); };
+    document.head.appendChild(el);
+  });
+}
+async function ensureLib(testFn, urls){
+  if(testFn()) return true;
+  for(const u of urls){ if(await loadScriptOnce(u) && testFn()) return true; }
+  return testFn();
+}
+const JSQR_URLS = [
+  'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js',
+  'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js'
+];
+const QRCODE_URLS = [
+  'https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js',
+  'https://unpkg.com/qrcodejs@1.0.0/qrcode.min.js'
+];
+function ensureJsQR(){ return ensureLib(()=>typeof jsQR !== 'undefined', JSQR_URLS); }
+function ensureQRCodeLib(){ return ensureLib(()=>typeof QRCode !== 'undefined', QRCODE_URLS); }
+window.addEventListener('load', ()=>{ ensureJsQR(); ensureQRCodeLib(); });
+
 let IOP = 'io';
 function $p(id){ return document.getElementById(IOP + id); }
 let ioStream = null, ioTimer = null, ioRefreshTimer = null, ioBusy = false, ioMatcher = null, ioFaceOn = false, ioTickN = 0;
@@ -3677,6 +3705,8 @@ async function startInOutScanner(p){
     return;
   }
   ioSeen = {}; ioMatcher = null; ioFaceOn = false; ioTickN = 0;
+  st.innerHTML = '<p class="note-inline">Loading QR scanner&hellip;</p>';
+  await ensureJsQR();
   const qrOk = (typeof jsQR !== 'undefined');
   let faceNote = '';
   if(false && $p('UseFace').checked){
@@ -3688,7 +3718,7 @@ async function startInOutScanner(p){
     }
   }
   if(!qrOk && !ioFaceOn){
-    st.innerHTML = '<div class="msg-err">QR scanner library did not load (check your internet connection) &mdash; refresh the page.</div>';
+    st.innerHTML = '<div class="msg-err">QR scanner library did not load (this computer\'s internet is blocking it). Check the internet, then press <b>Stop Camera</b> and <b>Start Camera</b> again, or refresh the page.</div>';
   } else {
     st.innerHTML = '<p class="note-inline">Camera on &mdash; ' + (qrOk ? 'QR' : '') + (qrOk && ioFaceOn ? ' + ' : '') + (ioFaceOn ? 'face' : '') + ' scanning is automatic. Leave it running.' + faceNote + '</p>';
   }
