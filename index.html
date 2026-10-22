@@ -3457,6 +3457,7 @@ let IOP = 'io';
 function $p(id){ return document.getElementById(IOP + id); }
 let ioStream = null, ioTimer = null, ioRefreshTimer = null, ioBusy = false, ioMatcher = null, ioFaceOn = false, ioTickN = 0;
 let ioSeen = {};
+let ioLastQR = { t:'', n:0, at:0 };
 const IO_MIN_GAP_MS = 2 * 60 * 1000;
 
 function inoutKey(date){ return 'inout_' + date; }
@@ -3504,7 +3505,7 @@ function inOutScannerHTML(p, extraButtons){
         <select id="${p}Cam"><option value="user">Front camera / laptop webcam</option><option value="environment">Back camera (phone)</option></select>
       </div>
       <div class="field"><label>&nbsp;</label>
-        <label style="margin:0;"><input type="checkbox" id="${p}UseFace" checked style="width:auto;"> Also recognize registered faces</label>
+        <input type="checkbox" id="${p}UseFace" style="display:none;"><p class="note-inline" style="margin:0;">Scanner: <b>QR card only</b> (face recognition is off)</p>
       </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 10px;">
@@ -3678,7 +3679,7 @@ async function startInOutScanner(p){
   ioSeen = {}; ioMatcher = null; ioFaceOn = false; ioTickN = 0;
   const qrOk = (typeof jsQR !== 'undefined');
   let faceNote = '';
-  if($p('UseFace').checked){
+  if(false && $p('UseFace').checked){
     const m = ioBuildMatcher(session);
     if(m){
       const ok = await ensureFaceModelsLoaded(IOP + 'Status');
@@ -3695,7 +3696,8 @@ async function startInOutScanner(p){
   const r = await ioReadDay(today);
   if(r.ok) ioUpdateCount(r.list, today);
   else st.innerHTML += '<div class="msg-err">Could not read today\'s records &mdash; check the internet connection.</div>';
-  ioTimer = setInterval(ioScanTick, 500);
+  ioLastQR = { t:'', n:0, at:0 };
+  ioTimer = setInterval(ioScanTick, 300);
   ioRefreshTimer = setInterval(ioRefreshData, 10 * 60 * 1000);
 }
 
@@ -3718,16 +3720,30 @@ async function ioScanTick(){
   try{
     if(typeof jsQR !== 'undefined'){
       const cv = $p('Canvas');
-      const scale = Math.min(1, 640 / video.videoWidth);
+      const scale = Math.min(1, 960 / video.videoWidth);
       cv.width = Math.round(video.videoWidth * scale);
       cv.height = Math.round(video.videoHeight * scale);
       const ctx = cv.getContext('2d', { willReadFrequently: true });
       ctx.drawImage(video, 0, 0, cv.width, cv.height);
       const img = ctx.getImageData(0, 0, cv.width, cv.height);
       const code = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
-      if(code && code.data){
+      if(!code || !code.data){
+        if(ioLastQR.t && Date.now() - ioLastQR.at > 1500) ioLastQR = { t:'', n:0, at:0 };
+      } else {
+        const nowMs = Date.now();
+        ioLastQR = (ioLastQR.t === code.data && nowMs - ioLastQR.at < 1500)
+          ? { t: code.data, n: ioLastQR.n + 1, at: nowMs }
+          : { t: code.data, n: 1, at: nowMs };
+      }
+      if(code && code.data && ioLastQR.n >= 2){
         if(code.data.indexOf('QHSKSK:') === 0){
-          await handleInOutScan(code.data.slice(7), 'qr');
+          const sid = code.data.slice(7);
+          if(DB.students.some(x=>x.id===sid)) await handleInOutScan(sid, 'qr');
+          else if(!ioSeen.__bad || Date.now() - ioSeen.__bad > 4000){
+            ioSeen.__bad = Date.now();
+            ioShowBanner('err', 'Unknown card &mdash; this student is not in the list.');
+            ioBeep(false);
+          }
         } else if(!ioSeen.__bad || Date.now() - ioSeen.__bad > 4000){
           ioSeen.__bad = Date.now();
           ioShowBanner('err', 'This QR is not a Quaid High School card.');
