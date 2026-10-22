@@ -580,7 +580,7 @@
         <h2 style="margin-bottom:14px;">In / Out Gate</h2>
         <p class="section-sub">Sign in with the school's Google account, then enter the gate password.</p>
         <div id="gateLoginMsg"></div>
-        <button class="btn-gold" style="width:100%;" onclick="gateGoogleSignIn()">Sign in with Google</button>
+        <button class="btn-gold" id="gateGoogleBtn" style="width:100%;" onclick="gateGoogleSignIn()">Sign in with Google</button>
       </div>
     </div>
     <div id="gatePwWrap" style="display:none;">
@@ -696,9 +696,9 @@ if(firebaseReady){
         showAdminPanelUI();
         gateAuthChanged();
       } else if(user && user.email && user.email.toLowerCase() === GATE_EMAIL.toLowerCase()){
-        isAdmin = false; isGate = true;
-        showAdminGateUI();
-        gateAuthChanged();
+        // old gate-password account: no longer used, sign it out so Google (admin) login is required
+        isAdmin = false; isGate = false;
+        auth.signOut();
       } else if(user){
         // Signed in with Google, but not the authorized account
         auth.signOut();
@@ -3317,7 +3317,16 @@ async function deleteAttendanceEntry(id){
    The QR code on each card holds "QHSKSK:" + the student's id. The
    In/Out scanner reads it and looks the student up, so the QR never
    changes even if the roll no / class changes next year. ---------------- */
-function studentQRText(stu){ return 'QHSKSK:' + stu.id; }
+/* Card validity: a card works until 31 December of its year. The year is
+   inside the QR ("QHSKSK:<id>:<year>"), so an old card stops working on
+   1 January and a new card must be printed. Cards printed before this
+   feature (no year in the QR) are treated as 2026 cards. */
+const LEGACY_QR_YEAR = 2026;
+function cardYearFor(en){
+  const m = en && en.session ? String(en.session).match(/\d{4}/) : null;
+  return m ? parseInt(m[0],10) : new Date().getFullYear();
+}
+function studentQRText(stu, en){ return 'QHSKSK:' + stu.id + ':' + cardYearFor(en); }
 
 function qrDataUrl(text, size){
   if(typeof QRCode === 'undefined') return '';
@@ -3340,7 +3349,8 @@ function latestEnrollmentFor(studentId){
 }
 
 function studentCardHTML(stu, en){
-  const qr = qrDataUrl(studentQRText(stu), 220);
+  const qr = qrDataUrl(studentQRText(stu, en), 220);
+  const validYr = cardYearFor(en);
   return `<div class="idcard">
     <div class="idcard-head"><img src="${SCHOOL_LOGO}" alt=""><div><b>Quaid High School KSK</b><span>Student Identity Card${en?' &middot; Session '+esc(en.session):''}</span></div></div>
     <div class="idcard-body">
@@ -3351,6 +3361,7 @@ function studentCardHTML(stu, en){
         <div class="row"><span>Class</span>${en?esc(en.className):'-'}</div>
         <div class="row"><span>Roll No</span>${en?esc(en.rollNo):'-'}</div>
         <div class="row"><span>Parent Ph.</span>${esc(stu.parentPhone||'-')}</div>
+        <div class="row" style="font-weight:700;color:var(--danger);"><span style="color:var(--danger);">Valid Till</span>31 Dec ${validYr}</div>
       </div>
       <div class="idcard-qr">${qr?`<img src="${qr}" alt="QR">`:'<div class="nop" style="height:21mm;">QR not available</div>'}<small>Scan for In / Out</small></div>
     </div>
@@ -3802,8 +3813,18 @@ async function ioScanTick(){
       }
       if(qrText && ioLastQR.n >= 2){
         if(qrText.indexOf('QHSKSK:') === 0){
-          const sid = qrText.slice(7);
-          if(DB.students.some(x=>x.id===sid)) await handleInOutScan(sid, 'qr');
+          const parts = qrText.slice(7).split(':');
+          const sid = parts[0];
+          const qrYear = parts[1] ? parseInt(parts[1],10) : LEGACY_QR_YEAR;
+          if(DB.students.some(x=>x.id===sid) && new Date().getFullYear() > qrYear){
+            const es = DB.students.find(x=>x.id===sid);
+            if(!ioSeen['exp_'+sid] || Date.now() - ioSeen['exp_'+sid] > 6000){
+              ioSeen['exp_'+sid] = Date.now();
+              ioShowBanner('err', 'CARD EXPIRED<br><small>' + esc(es.name) + ' &middot; valid till 31 Dec ' + qrYear + ' &mdash; issue a new card</small>', es.photo);
+              ioBeep(false);
+            }
+          }
+          else if(DB.students.some(x=>x.id===sid)) await handleInOutScan(sid, 'qr');
           else if(!ioSeen.__bad || Date.now() - ioSeen.__bad > 4000){
             ioSeen.__bad = Date.now();
             ioShowBanner('err', 'Unknown card &mdash; this student is not in the list.');
@@ -3940,7 +3961,7 @@ async function gatePwPrepare(){
     field.style.display = 'block'; btn.style.display = 'block'; btn.textContent = 'Save Password & Open';
   } else {
     gatePwMode = 'none';
-    sub.textContent = 'The gate password has not been set yet. Ask the school admin to set it.';
+    sub.textContent = 'The gate password has not been set yet, and this account is not the admin. Press Sign out, then sign in with the admin Google account to set it.';
     field.style.display = 'none'; btn.style.display = 'none';
   }
 }
@@ -4004,10 +4025,26 @@ async function gateSignIn(){
     else showGateLoginUI('Wrong password (or the gate account is not set up yet).');
   }
 }
+let gateGoogleBusy = false;
 function gateGoogleSignIn(){
   if(!auth){ showGateLoginUI('Firebase is not configured, so sign-in is unavailable.'); return; }
-  auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(err=>{
-    showGateLoginUI('Google sign-in failed: ' + (err && err.message || 'please try again'));
+  if(gateGoogleBusy) return; // ignore a second click while the Google window is already open
+  gateGoogleBusy = true;
+  const btn = document.getElementById('gateGoogleBtn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Opening Google\u2026'; }
+  const done = ()=>{ gateGoogleBusy = false; if(btn){ btn.disabled = false; btn.textContent = 'Sign in with Google'; } };
+  const provider = new firebase.auth.GoogleAuthProvider();
+  auth.signInWithPopup(provider).then(done).catch(err=>{
+    done();
+    const c = err && err.code || '';
+    if(c === 'auth/cancelled-popup-request' || c === 'auth/popup-closed-by-user'){
+      showGateLoginUI('Google window was closed. Press "Sign in with Google" once and finish the sign-in in that window.');
+    } else if(c === 'auth/popup-blocked'){
+      // browser blocked the popup: sign in on this same page instead
+      auth.signInWithRedirect(provider);
+    } else {
+      showGateLoginUI('Google sign-in failed: ' + (err && err.message || 'please try again'));
+    }
   });
 }
 function gateLock(){
