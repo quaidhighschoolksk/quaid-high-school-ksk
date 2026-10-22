@@ -244,7 +244,10 @@
     body *{ visibility:hidden; }
     #printArea, #printArea *{ visibility:visible; }
     #printArea{ display:block !important; position:absolute; left:0; top:0; width:100%; padding:20px; }
+    #printArea:has(.idcard-sheet){ padding:0; }
+    #printArea .idcard-sheet{ page:cards; grid-template-columns:repeat(2,86mm); gap:2.5mm 4mm; justify-content:center; }
   }
+  @page cards{ size:A4 portrait; margin:6mm; }
   @media(max-width:640px){
     .row-2{grid-template-columns:1fr;}
   }
@@ -665,6 +668,13 @@ const ALLOWED_ADMIN_EMAIL = 'khalidsayal.3@gmail.com';
 // Gate (In / Out scanner) account: create this user in Firebase Console >
 // Authentication > Users (Email/Password). The password you set there is
 // the password typed on the In / Out page.
+// SETUP (one time, 2 minutes):
+//  1. console.firebase.google.com > your project > Build > Authentication
+//     > Sign-in method > enable "Email/Password".
+//  2. Authentication > Users > Add user:
+//       Email:    gate@quaidhighschoolksk.com   (must match GATE_EMAIL below)
+//       Password: the In / Out password you want (min 6 characters).
+//  3. To change the password later: Users > the gate user > menu (...) > Reset password / edit.
 const GATE_EMAIL = 'gate@quaidhighschoolksk.com';
 let isGate = false;
 let auth = null;
@@ -2322,7 +2332,7 @@ function renderAdminPanel(){
 
     <div class="admin-block">
       <h3>Student ID Cards (with QR)</h3>
-      <p class="note-inline" style="margin:-6px 0 14px;">Every student's card is made automatically from their profile, photo, roll no and class, with a QR code for In / Out. Pick a session and class to see all cards and print them together. A single card also opens right after you save a student or an enrollment, or from the Card button in the Enrollments table.</p>
+      <p class="note-inline" style="margin:-6px 0 14px;">Every student's card is made automatically from their profile, photo, roll no and class, with a QR code for In / Out. Pick a session (and class) to print them together or download them all as one PDF. A single card also opens right after you save a student or an enrollment, or from the Card button in the Enrollments table.</p>
       <div class="row-2">
         <div class="field"><label>Session / Year</label><input id="cardSession" value="${new Date().getFullYear()}" oninput="renderCardsPreview()"></div>
         <div class="field"><label>Class</label><select id="cardClass" onchange="renderCardsPreview()">${classOptionsHTML()}</select></div>
@@ -3360,21 +3370,79 @@ function printStudentCard(studentId, enrollmentId){
 }
 
 let lastCardsSheetHTML = '';
+function cardsListFor(session, className){
+  const order = c => { const i = CLASS_LIST.indexOf(c); return i<0 ? 99 : i; };
+  return DB.enrollments.filter(en=>en.session===session && (!className || en.className===className))
+    .sort((a,b)=> order(a.className)-order(b.className) || (parseInt(a.rollNo,10)||0)-(parseInt(b.rollNo,10)||0))
+    .map(en=>({ en, stu: DB.students.find(s=>s.id===en.studentId) })).filter(x=>x.stu);
+}
 function renderCardsPreview(){
   const wrap = document.getElementById('cardsPreviewWrap');
   if(!wrap) return;
   const session = document.getElementById('cardSession').value.trim();
   const className = document.getElementById('cardClass').value;
-  if(!session || !className){ wrap.innerHTML = '<p class="note-inline">Select a session and class to see its cards.</p>'; lastCardsSheetHTML=''; return; }
-  const list = DB.enrollments.filter(en=>en.session===session && en.className===className)
-    .sort((a,b)=>(parseInt(a.rollNo,10)||0)-(parseInt(b.rollNo,10)||0));
-  if(!list.length){ wrap.innerHTML = '<p class="note-inline">No students enrolled in this class/session yet.</p>'; lastCardsSheetHTML=''; return; }
-  const cards = list.map(en=>{ const stu = DB.students.find(s=>s.id===en.studentId); return stu ? studentCardHTML(stu, en) : ''; }).join('');
-  lastCardsSheetHTML = '<div class="idcard-sheet">' + cards + '</div>';
-  wrap.innerHTML = `<div style="margin:6px 0 12px;"><button type="button" class="btn-gold" onclick="printAllCards()">Print All Cards (${list.length})</button></div>
-    <div class="idcard-sheet" style="justify-content:start;">${cards}</div>`;
+  if(!session){ wrap.innerHTML = '<p class="note-inline">Enter a session to see its cards.</p>'; lastCardsSheetHTML=''; return; }
+  const list = cardsListFor(session, className);
+  const all = cardsListFor(session, '');
+  if(!all.length){ wrap.innerHTML = '<p class="note-inline">No students enrolled in this session yet.</p>'; lastCardsSheetHTML=''; return; }
+  const btns = `<div style="margin:6px 0 12px;display:flex;gap:8px;flex-wrap:wrap;">
+      ${className && list.length ? `<button type="button" class="btn-gold" onclick="printAllCards()">Print ${esc(className)} (${list.length})</button>
+      <button type="button" class="tag-btn" onclick="downloadCardsPDF(false)">Download PDF &mdash; ${esc(className)}</button>` : ''}
+      <button type="button" class="btn-gold" onclick="printAllCards(true)">Print ALL classes (${all.length})</button>
+      <button type="button" class="tag-btn" onclick="downloadCardsPDF(true)">Download PDF &mdash; ALL classes</button>
+    </div>
+    <p class="note-inline" style="margin:0 0 8px;">A4 page par ek sath 10 cards (2 &times; 5) aate hain &mdash; print aur PDF dono mein. Print dialog mein "Margins: Default/None" aur "Scale: 100%" rakhein.</p>
+    <div id="cardsPdfStatus"></div>`;
+  lastCardsSheetHTML = list.length ? '<div class="idcard-sheet">' + list.map(x=>studentCardHTML(x.stu,x.en)).join('') + '</div>' : '';
+  wrap.innerHTML = btns + (list.length
+    ? `<div class="idcard-sheet" style="justify-content:start;">${list.map(x=>studentCardHTML(x.stu,x.en)).join('')}</div>`
+    : '<p class="note-inline">Select a class to preview its cards, or use the ALL classes buttons above.</p>');
 }
-function printAllCards(){ if(lastCardsSheetHTML) printHTML(lastCardsSheetHTML); }
+function printAllCards(allClasses){
+  if(allClasses){
+    const session = document.getElementById('cardSession').value.trim();
+    const list = cardsListFor(session, '');
+    if(!list.length) return;
+    printHTML('<div class="idcard-sheet">' + list.map(x=>studentCardHTML(x.stu,x.en)).join('') + '</div>');
+  } else if(lastCardsSheetHTML){ printHTML(lastCardsSheetHTML); }
+}
+
+/* Download cards as PDF: A4, 10 cards per page (2 columns x 5 rows) */
+async function downloadCardsPDF(allClasses){
+  const st = document.getElementById('cardsPdfStatus');
+  const session = document.getElementById('cardSession').value.trim();
+  const className = allClasses ? '' : document.getElementById('cardClass').value;
+  const list = cardsListFor(session, className);
+  if(!list.length){ if(st) st.innerHTML = '<div class="msg-err">No cards to download.</div>'; return; }
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){
+    if(st) st.innerHTML = '<div class="msg-err">Download tools did not load (check your internet connection) and try again.</div>'; return;
+  }
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+  const PER_PAGE = 10, pages = Math.ceil(list.length / PER_PAGE);
+  try{
+    for(let p=0; p<pages; p++){
+      if(st) st.innerHTML = '<p class="note-inline">Preparing PDF&hellip; page ' + (p+1) + ' of ' + pages + '</p>';
+      await new Promise(r=>setTimeout(r,30));
+      const chunk = list.slice(p*PER_PAGE, (p+1)*PER_PAGE);
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;left:-10000px;top:0;width:210mm;height:297mm;background:#fff;box-sizing:border-box;padding:6mm 0;';
+      host.innerHTML = '<div class="idcard-sheet" style="grid-template-columns:repeat(2,86mm);gap:2.5mm 4mm;justify-content:center;">' + chunk.map(x=>studentCardHTML(x.stu,x.en)).join('') + '</div>';
+      document.body.appendChild(host);
+      try{
+        const canvas = await html2canvas(host, { scale:2.5, backgroundColor:'#ffffff', useCORS:true });
+        if(p>0) pdf.addPage('a4','portrait');
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, 210, 297);
+      } finally { host.remove(); }
+    }
+    const name = 'Student-Cards-' + session + (className ? '-' + className : '-All-Classes') + '.pdf';
+    pdf.save(name);
+    if(st) st.innerHTML = '<p class="note-inline">Done &mdash; ' + list.length + ' cards saved as ' + esc(name) + '</p>';
+  }catch(err){
+    console.error(err);
+    if(st) st.innerHTML = '<div class="msg-err">Could not create the PDF, please try again.</div>';
+  }
+}
 
 /* ---------------- IN / OUT SCANNER (QR + face, camera stays on) ----------------
    One camera feed. Each tick looks for a QR code and (optionally) a
