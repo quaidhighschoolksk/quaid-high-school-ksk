@@ -578,10 +578,19 @@
     <div id="gateLoginWrap">
       <div class="admin-gate">
         <h2 style="margin-bottom:14px;">In / Out Gate</h2>
-        <p class="section-sub">Enter the gate password to start the QR scanner.</p>
+        <p class="section-sub">Sign in with the school's Google account, then enter the gate password.</p>
         <div id="gateLoginMsg"></div>
-        <div class="field" style="text-align:left;"><label>Password</label><input type="password" id="gatePassword" autocomplete="current-password" onkeydown="if(event.key==='Enter') gateSignIn()"></div>
-        <button class="btn-gold" style="width:100%;" onclick="gateSignIn()">Open Scanner</button>
+        <button class="btn-gold" style="width:100%;" onclick="gateGoogleSignIn()">Sign in with Google</button>
+      </div>
+    </div>
+    <div id="gatePwWrap" style="display:none;">
+      <div class="admin-gate">
+        <h2 style="margin-bottom:14px;">In / Out Gate</h2>
+        <p class="section-sub" id="gatePwSub">Enter the gate password to start the QR scanner.</p>
+        <div id="gatePwMsg"></div>
+        <div class="field" id="gatePwField" style="text-align:left;"><label>Password</label><input type="password" id="gatePwInput" autocomplete="off" onkeydown="if(event.key==='Enter') gatePwSubmit()"></div>
+        <button class="btn-gold" id="gatePwBtn" style="width:100%;" onclick="gatePwSubmit()">Open Scanner</button>
+        <button class="tag-btn ghost" style="margin-top:10px;" onclick="gateLock()">Sign out</button>
       </div>
     </div>
     <div id="gatePanelWrap" style="display:none;"></div>
@@ -685,6 +694,7 @@ if(firebaseReady){
       if(user && user.email && user.email.toLowerCase() === ALLOWED_ADMIN_EMAIL.toLowerCase()){
         isAdmin = true; isGate = false;
         showAdminPanelUI();
+        gateAuthChanged();
       } else if(user && user.email && user.email.toLowerCase() === GATE_EMAIL.toLowerCase()){
         isAdmin = false; isGate = true;
         showAdminGateUI();
@@ -2311,7 +2321,17 @@ function renderAdminPanel(){
     </div>
 
     <div class="admin-block">
-      <h3>In / Out Scanner (QR + Face)</h3>
+      <h3>In / Out Gate Password</h3>
+      <p class="note-inline" style="margin:-6px 0 14px;">The In / Out link needs your Google sign-in <b>and</b> this password. Set it here, or change it any time.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+        <div class="field" style="margin:0;max-width:260px;"><label>New gate password</label><input type="text" id="adminGatePw" autocomplete="off" placeholder="at least 4 characters"></div>
+        <button type="button" class="btn-gold" onclick="adminChangeGatePw()">Save Password</button>
+      </div>
+      <div id="adminGatePwMsg" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="admin-block">
+      <h3>In / Out Scanner (QR)</h3>
       <p class="note-inline" style="margin:-6px 0 14px;">Start the camera <b>once</b> and leave it on. A student's first scan of the day saves <b>In</b>, the next scan saves <b>Out</b>, automatically. For the school gate use the separate <b>In / Out</b> link at the top of the site (password protected) &mdash; this block is for testing and office use.</p>
       ${inOutScannerHTML('io')}
     </div>
@@ -3469,6 +3489,7 @@ async function ensureLib(testFn, urls){
   return testFn();
 }
 const JSQR_URLS = [
+  'jsQR.js',
   'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js',
   'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js'
@@ -3486,6 +3507,7 @@ function $p(id){ return document.getElementById(IOP + id); }
 let ioStream = null, ioTimer = null, ioRefreshTimer = null, ioBusy = false, ioMatcher = null, ioFaceOn = false, ioTickN = 0;
 let ioSeen = {};
 let ioLastQR = { t:'', n:0, at:0 };
+let ioDetector = null;
 const IO_MIN_GAP_MS = 2 * 60 * 1000;
 
 function inoutKey(date){ return 'inout_' + date; }
@@ -3706,8 +3728,15 @@ async function startInOutScanner(p){
   }
   ioSeen = {}; ioMatcher = null; ioFaceOn = false; ioTickN = 0;
   st.innerHTML = '<p class="note-inline">Loading QR scanner&hellip;</p>';
-  await ensureJsQR();
-  const qrOk = (typeof jsQR !== 'undefined');
+  ioDetector = null;
+  try{
+    if('BarcodeDetector' in window){
+      const fm = BarcodeDetector.getSupportedFormats ? await BarcodeDetector.getSupportedFormats() : ['qr_code'];
+      if(fm.indexOf('qr_code') >= 0) ioDetector = new BarcodeDetector({ formats:['qr_code'] });
+    }
+  }catch(e){ ioDetector = null; }
+  if(!ioDetector) await ensureJsQR();
+  const qrOk = !!ioDetector || (typeof jsQR !== 'undefined');
   let faceNote = '';
   if(false && $p('UseFace').checked){
     const m = ioBuildMatcher(session);
@@ -3735,7 +3764,7 @@ function stopInOutScanner(){
   if(ioTimer){ clearInterval(ioTimer); ioTimer = null; }
   if(ioRefreshTimer){ clearInterval(ioRefreshTimer); ioRefreshTimer = null; }
   if(ioStream){ ioStream.getTracks().forEach(t=>t.stop()); ioStream = null; }
-  ioMatcher = null; ioFaceOn = false; ioBusy = false;
+  ioMatcher = null; ioFaceOn = false; ioBusy = false; ioDetector = null;
   const video = $p('Video');
   if(video) video.srcObject = null;
   const st = $p('Status');
@@ -3748,7 +3777,10 @@ async function ioScanTick(){
   if(!video || video.readyState < 2 || !video.videoWidth) return;
   ioBusy = true;
   try{
-    if(typeof jsQR !== 'undefined'){
+    let qrText = null;
+    if(ioDetector){
+      try{ const r = await ioDetector.detect(video); if(r && r.length) qrText = r[0].rawValue; }catch(e){}
+    } else if(typeof jsQR !== 'undefined'){
       const cv = $p('Canvas');
       const scale = Math.min(1, 960 / video.videoWidth);
       cv.width = Math.round(video.videoWidth * scale);
@@ -3757,17 +3789,20 @@ async function ioScanTick(){
       ctx.drawImage(video, 0, 0, cv.width, cv.height);
       const img = ctx.getImageData(0, 0, cv.width, cv.height);
       const code = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
-      if(!code || !code.data){
-        if(ioLastQR.t && Date.now() - ioLastQR.at > 1500) ioLastQR = { t:'', n:0, at:0 };
+      if(code && code.data) qrText = code.data;
+    }
+    {
+      const nowMs = Date.now();
+      if(!qrText){
+        if(ioLastQR.t && nowMs - ioLastQR.at > 1500) ioLastQR = { t:'', n:0, at:0 };
       } else {
-        const nowMs = Date.now();
-        ioLastQR = (ioLastQR.t === code.data && nowMs - ioLastQR.at < 1500)
-          ? { t: code.data, n: ioLastQR.n + 1, at: nowMs }
-          : { t: code.data, n: 1, at: nowMs };
+        ioLastQR = (ioLastQR.t === qrText && nowMs - ioLastQR.at < 1500)
+          ? { t: qrText, n: ioLastQR.n + 1, at: nowMs }
+          : { t: qrText, n: 1, at: nowMs };
       }
-      if(code && code.data && ioLastQR.n >= 2){
-        if(code.data.indexOf('QHSKSK:') === 0){
-          const sid = code.data.slice(7);
+      if(qrText && ioLastQR.n >= 2){
+        if(qrText.indexOf('QHSKSK:') === 0){
+          const sid = qrText.slice(7);
           if(DB.students.some(x=>x.id===sid)) await handleInOutScan(sid, 'qr');
           else if(!ioSeen.__bad || Date.now() - ioSeen.__bad > 4000){
             ioSeen.__bad = Date.now();
@@ -3857,10 +3892,12 @@ async function inoutToAttendance(){
    someone who knows it. ---------------- */
 function gateAuthChanged(){
   const tab = document.getElementById('tab-gate');
-  if(isGate){ if(tab && tab.classList.contains('active')) showGatePanelUI(); }
+  if(isGate || isAdmin){ if(tab && tab.classList.contains('active')) showGatePanelUI(); }
   else showGateLoginUI();
 }
 function showGateLoginUI(msg){
+  gatePwOk = false;
+  const pww0 = document.getElementById('gatePwWrap'); if(pww0) pww0.style.display = 'none';
   if(IOP === 'gt') stopInOutScanner();
   const lw = document.getElementById('gateLoginWrap'), pw = document.getElementById('gatePanelWrap');
   if(lw) lw.style.display = 'block';
@@ -3868,10 +3905,80 @@ function showGateLoginUI(msg){
   const m = document.getElementById('gateLoginMsg');
   if(m) m.innerHTML = msg ? '<div class="msg-err">' + esc(msg) + '</div>' : '';
 }
-function showGatePanelUI(){
-  const lw = document.getElementById('gateLoginWrap'), pw = document.getElementById('gatePanelWrap');
+let gatePwOk = false, gatePwMode = 'check', gatePwRec = null;
+async function sha256Hex(str){
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+async function gatePwLoad(){
+  try{
+    const d = await fsDb.collection('school_data').doc('gate_pw').get();
+    return { ok:true, rec: d.exists ? d.data().value : null };
+  }catch(e){ console.error('gate pw read failed', e); return { ok:false, rec:null }; }
+}
+async function gatePwSave(pw){
+  const salt = uid();
+  const hash = await sha256Hex(salt + ':' + pw);
+  try{ await fsDb.collection('school_data').doc('gate_pw').set({ value:{ salt, hash } }); return true; }
+  catch(e){ console.error('gate pw save failed', e); return false; }
+}
+async function gatePwPrepare(){
+  const sub = document.getElementById('gatePwSub'), msg = document.getElementById('gatePwMsg');
+  const field = document.getElementById('gatePwField'), btn = document.getElementById('gatePwBtn'), inp = document.getElementById('gatePwInput');
+  if(inp) inp.value = '';
+  msg.innerHTML = '';
+  const r = await gatePwLoad();
+  if(!r.ok){ gatePwMode = 'check'; gatePwRec = null; sub.textContent = 'Enter the gate password to start the QR scanner.'; msg.innerHTML = '<div class="msg-err">Could not reach the database. Check the internet and try again.</div>'; return; }
+  gatePwRec = r.rec;
+  if(gatePwRec && gatePwRec.hash){
+    gatePwMode = 'check';
+    sub.textContent = 'Enter the gate password to start the QR scanner.';
+    field.style.display = 'block'; btn.style.display = 'block'; btn.textContent = 'Open Scanner';
+  } else if(isAdmin){
+    gatePwMode = 'set';
+    sub.textContent = 'First time: choose a password for the In / Out gate (at least 4 characters). It will be asked every time the gate is opened.';
+    field.style.display = 'block'; btn.style.display = 'block'; btn.textContent = 'Save Password & Open';
+  } else {
+    gatePwMode = 'none';
+    sub.textContent = 'The gate password has not been set yet. Ask the school admin to set it.';
+    field.style.display = 'none'; btn.style.display = 'none';
+  }
+}
+async function gatePwSubmit(){
+  const inp = document.getElementById('gatePwInput'), msg = document.getElementById('gatePwMsg');
+  const pw = inp.value;
+  if(!pw){ msg.innerHTML = '<div class="msg-err">Enter the password.</div>'; return; }
+  if(gatePwMode === 'set'){
+    if(pw.length < 4){ msg.innerHTML = '<div class="msg-err">Use at least 4 characters.</div>'; return; }
+    if(!(await gatePwSave(pw))){ msg.innerHTML = '<div class="msg-err">Could not save the password (database permission problem).</div>'; return; }
+    gatePwOk = true; inp.value = ''; showGatePanelUI(); return;
+  }
+  if(gatePwMode === 'check' && gatePwRec){
+    const h = await sha256Hex(gatePwRec.salt + ':' + pw);
+    if(h === gatePwRec.hash){ gatePwOk = true; inp.value = ''; showGatePanelUI(); }
+    else { msg.innerHTML = '<div class="msg-err">Wrong password.</div>'; inp.value = ''; }
+  }
+}
+async function adminChangeGatePw(){
+  const inp = document.getElementById('adminGatePw'), msg = document.getElementById('adminGatePwMsg');
+  const pw = inp.value;
+  if(pw.length < 4){ msg.innerHTML = '<div class="msg-err">Use at least 4 characters.</div>'; return; }
+  const ok = await gatePwSave(pw);
+  msg.innerHTML = ok ? '<p class="msg-ok">Gate password saved. It is asked the next time the gate is opened.</p>' : '<div class="msg-err">Could not save the password.</div>';
+  if(ok) inp.value = '';
+}
+async function showGatePanelUI(){
+  const lw = document.getElementById('gateLoginWrap'), pw = document.getElementById('gatePanelWrap'), pww = document.getElementById('gatePwWrap');
   if(!lw || !pw) return;
   lw.style.display = 'none';
+  if(!gatePwOk){
+    pw.style.display = 'none';
+    if(IOP === 'gt') stopInOutScanner();
+    if(pww) pww.style.display = 'block';
+    await gatePwPrepare();
+    return;
+  }
+  if(pww) pww.style.display = 'none';
   pw.style.display = 'block';
   if(!pw.dataset.built){
     pw.innerHTML = '<div class="toolbar"><h2>In / Out Gate</h2></div>' +
@@ -3897,12 +4004,19 @@ async function gateSignIn(){
     else showGateLoginUI('Wrong password (or the gate account is not set up yet).');
   }
 }
+function gateGoogleSignIn(){
+  if(!auth){ showGateLoginUI('Firebase is not configured, so sign-in is unavailable.'); return; }
+  auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(err=>{
+    showGateLoginUI('Google sign-in failed: ' + (err && err.message || 'please try again'));
+  });
+}
 function gateLock(){
+  gatePwOk = false;
   stopInOutScanner();
   if(auth) auth.signOut();
 }
 function openGateTab(){
-  if(isGate) showGatePanelUI(); else showGateLoginUI();
+  if(isGate || isAdmin) showGatePanelUI(); else showGateLoginUI();
 }
 
 async function deleteDatesheetEntry(id){
