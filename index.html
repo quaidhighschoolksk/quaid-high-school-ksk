@@ -4145,7 +4145,7 @@ function renderPaperGenerator(){
     return;
   }
   const subs = PG.cls ? (DB.classSubjects[PG.cls] || []) : [];
-  const tabs = [['bank','Question Bank'],['import','Import from PDF / Notes'],['ai','AI Questions'],['manual','Manual Paper'],['auto','Auto Paper'],['saved','Saved Papers']];
+  const tabs = [['bank','Question Bank'],['import','Import from PDF / Notes'],['ai','AI Questions'],['check','Check Sheets'],['manual','Manual Paper'],['auto','Auto Paper'],['saved','Saved Papers']];
   box.innerHTML = `
     <h3>Paper Generator <span style="font-size:11px;background:var(--navy-900);color:#fff;padding:2px 8px;border-radius:10px;vertical-align:middle;">ADMIN ONLY</span></h3>
     <p class="note-inline" style="margin:-6px 0 14px;">Build a question bank (exercise + conceptual past-paper questions), then make a paper manually or automatically. Only this admin account can see or use any of this.</p>
@@ -4175,7 +4175,7 @@ async function pgSetScope(){
 }
 async function pgTab(t){
   PG.tab = t; pgSet(''); PG.imp = []; PG.impMsg = '';
-  if(t==='saved') await pgLoadSaved();
+  if(t==='saved' || t==='check') await pgLoadSaved();
   renderPaperGenerator();
 }
 function pgNeedScope(){
@@ -4189,6 +4189,7 @@ function pgRenderBody(){
   if(PG.tab==='bank') b.innerHTML = pgBankHTML();
   else if(PG.tab==='import') b.innerHTML = pgImportHTML();
   else if(PG.tab==='ai') b.innerHTML = pgAiHTML();
+  else if(PG.tab==='check'){ b.innerHTML = pgCheckHTML(); pgChkRefresh(); }
   else if(PG.tab==='manual') b.innerHTML = pgManualHTML();
   else if(PG.tab==='auto') b.innerHTML = pgAutoHTML();
 }
@@ -4571,14 +4572,14 @@ async function pgSavePaper(){
   if(!pgOK() || !PG.paper) return;
   const p = PG.paper;
   try{
-    await fsDb.collection(PG_COLLECTION).doc('paper__'+p.id).set({ paper: p, savedAt: new Date().toISOString() });
+    await fsDb.collection(PG_COLLECTION).doc('paper__'+p.id).set({ kind:'paper', paper: p, savedAt: new Date().toISOString() });
     // count usage so "prefer unused" works next time (only first time this paper is saved)
     if(!p._counted){
       const ids = new Set(PG_TYPES.flatMap(t=>p.sections[t].map(q=>q.id)));
       PG.bank.forEach(q=>{ if(ids.has(q.id)) q.used = (q.used||0)+1; });
       await pgSaveBank();
       p._counted = true;
-      await fsDb.collection(PG_COLLECTION).doc('paper__'+p.id).set({ paper: p, savedAt: new Date().toISOString() });
+      await fsDb.collection(PG_COLLECTION).doc('paper__'+p.id).set({ kind:'paper', paper: p, savedAt: new Date().toISOString() });
     }
     pgSet('<div class="msg-ok">Paper saved. Find it under "Saved Papers".</div>');
   }catch(e){ console.error(e); pgSet('<div class="msg-err">Save failed: '+esc(e.message||'')+'</div>'); }
@@ -4590,7 +4591,7 @@ async function pgLoadSaved(){
   PG.saved = [];
   if(!pgOK()) return;
   try{
-    const snap = await fsDb.collection(PG_COLLECTION).get();
+    const snap = await fsDb.collection(PG_COLLECTION).where('kind','==','paper').get();
     snap.forEach(d=>{ if(d.id.indexOf('paper__')===0) PG.saved.push({ docId:d.id, ...d.data() }); });
     PG.saved.sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));
   }catch(e){ console.error(e); pgSet('<div class="msg-err">Could not load saved papers.</div>'); }
@@ -4626,28 +4627,33 @@ async function pgDeleteSaved(docId){
 const PG_MODEL = 'claude-sonnet-5-5';
 function pgSrcKey(){ return 'src__' + (PG.cls+'__'+PG.subject).replace(/[\/\s]+/g,'_'); }
 const PG_GEMINI_MODEL = 'gemini-2.5-flash'; // free-tier model; change here if Google renames it
-async function pgClaude(system, user, maxTokens){
+async function pgClaude(system, user, maxTokens, images){
   const key = PG.cfg && PG.cfg.apiKey;
   if(!key) throw new Error('Save the AI key first (AI Questions tab).');
+  images = images || [];
   if(key.indexOf('sk-ant-') === 0){
     // Anthropic (paid) key
+    const content = images.map(d=>({ type:'image', source:{ type:'base64', media_type:'image/jpeg', data:d.split(',')[1] } }));
+    content.push({ type:'text', text:user });
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
       headers:{ 'content-type':'application/json', 'x-api-key':key, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
-      body: JSON.stringify({ model:PG_MODEL, max_tokens:maxTokens||4000, system, messages:[{ role:'user', content:user }] })
+      body: JSON.stringify({ model:PG_MODEL, max_tokens:maxTokens||4000, system, messages:[{ role:'user', content }] })
     });
     const d = await r.json().catch(()=>({}));
     if(!r.ok) throw new Error((d.error && d.error.message) || ('AI request failed ('+r.status+')'));
     return (d.content||[]).map(x=>x.text||'').join('');
   }
   // Google Gemini (free key from aistudio.google.com/apikey)
+  const parts = images.map(d=>({ inlineData:{ mimeType:'image/jpeg', data:d.split(',')[1] } }));
+  parts.push({ text:user });
   const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+PG_GEMINI_MODEL+':generateContent?key='+encodeURIComponent(key), {
     method:'POST',
     headers:{ 'content-type':'application/json' },
     body: JSON.stringify({
       systemInstruction:{ parts:[{ text:system }] },
-      contents:[{ role:'user', parts:[{ text:user }] }],
-      generationConfig:{ maxOutputTokens: Math.min(maxTokens||4000, 8192), temperature:0.7 }
+      contents:[{ role:'user', parts }],
+      generationConfig:{ maxOutputTokens: Math.min(maxTokens||4000, 8192), temperature:0.4 }
     })
   });
   const d = await r.json().catch(()=>({}));
@@ -4655,9 +4661,9 @@ async function pgClaude(system, user, maxTokens){
     const msg = (d.error && d.error.message) || ('AI request failed ('+r.status+')');
     throw new Error(r.status===429 ? 'Free limit reached for now — wait a minute (or until tomorrow) and try again. ('+msg+')' : msg);
   }
-  const parts = d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts;
-  if(!parts) throw new Error('The AI gave no answer (it may have blocked the text). Try again or use a smaller chapter.');
-  return parts.map(x=>x.text||'').join('');
+  const out = d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts;
+  if(!out) throw new Error('The AI gave no answer (it may have blocked the content). Try again with clearer photos or a smaller chapter.');
+  return out.map(x=>x.text||'').join('');
 }
 async function pgSaveKey(){
   if(!pgOK()) return;
@@ -4767,6 +4773,271 @@ async function pgSolvePaper(t, i){
     pgRenderPaper();
   }catch(e){ console.error(e); alert(e.message||'Could not get the solution'); }
 }
+
+
+/* ---------------- CHECK SHEETS (AI answer-sheet scanner) ---------------- */
+PG.chk = { paperId:'', session:String(new Date().getFullYear()), roll:'', lang:'English', files:[], res:null, list:[] };
+
+function pgChkPaper(){ const s = PG.saved.find(x=>x.paper && x.paper.id===PG.chk.paperId); return s ? s.paper : null; }
+function pgChkQuestions(p){
+  let n = 0;
+  return PG_TYPES.flatMap(t=>(p.sections[t]||[]).map(q=>({ no:++n, type:t, text:q.text, max:+q.marks||0, answer:q.answer||'' })));
+}
+function pgChkTotals(rows){
+  return { got: rows.reduce((a,x)=>a+(+x.marks||0),0), max: rows.reduce((a,x)=>a+(+x.max||0),0) };
+}
+function pgCheckHTML(){
+  const papers = PG.saved.filter(s=>s.paper && s.paper.cls===PG.cls && s.paper.subject===PG.subject);
+  if(!papers.length) return '<div class="empty">First save a paper (Manual Paper or Auto Paper, then "Save Paper"). Then come back here to check students\' sheets.</div>';
+  if(!papers.some(s=>s.paper.id===PG.chk.paperId)) PG.chk.paperId = papers[0].paper.id;
+  const enr = (DB.enrollments||[]).filter(e=>e.className===PG.cls && String(e.session)===String(PG.chk.session));
+  const nameOf = e=>{ const st = (DB.students||[]).find(s=>s.id===e.studentId); return st ? st.name : ''; };
+  return `
+    <p class="note-inline" style="margin:0 0 12px;">Upload photos (or a PDF) of one student's solved paper. The AI compares it with the paper and model answers, finds mistakes and suggests marks. <b>You always review and can change every mark before saving.</b></p>
+    <div class="row-2">
+      <div class="field"><label>Paper</label><select onchange="PG.chk.paperId=this.value;PG.chk.res=null;pgChkRefresh()">${papers.map(s=>`<option value="${esc(s.paper.id)}" ${s.paper.id===PG.chk.paperId?'selected':''}>${esc(s.paper.exam||'Paper')} &middot; ${esc(s.paper.date||'')} &middot; ${pgPaperTotal(s.paper)} marks</option>`).join('')}</select></div>
+      <div class="field"><label>Session</label><input value="${esc(PG.chk.session)}" onchange="PG.chk.session=this.value.trim();pgRenderBody()"></div>
+    </div>
+    <div class="row-2">
+      <div class="field"><label>Student Roll No</label><input id="pgChkRoll" list="pgRolls" value="${esc(PG.chk.roll)}" oninput="PG.chk.roll=this.value.trim()" placeholder="type or pick">
+        <datalist id="pgRolls">${enr.map(e=>`<option value="${esc(e.rollNo)}">${esc(nameOf(e))}</option>`).join('')}</datalist></div>
+      <div class="field"><label>Write notes in</label><select onchange="PG.chk.lang=this.value"><option ${PG.chk.lang==='English'?'selected':''}>English</option><option ${PG.chk.lang==='Urdu'?'selected':''}>Urdu</option></select></div>
+    </div>
+    <div class="field"><label>Photos or PDF of the solved paper (up to 8 pages &mdash; cover the student's name before taking the photo)</label>
+      <input type="file" id="pgChkFile" multiple accept="image/*,.pdf,application/pdf" onchange="pgChkFiles(this.files)"></div>
+    <div id="pgChkThumbs"></div>
+    <button type="button" class="btn-gold" onclick="pgCheckSheet()">Check Sheet</button>
+    <div id="pgChkStatus" style="margin-top:12px;"></div>
+    <div id="pgChkResult"></div>
+    <div id="pgChkList"></div>`;
+}
+function pgChkRefresh(){
+  const th = document.getElementById('pgChkThumbs');
+  if(th) th.innerHTML = PG.chk.files.length ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 12px;">${PG.chk.files.map((f,i)=>`<div style="position:relative;"><img src="${f}" style="height:90px;border:1px solid var(--line);border-radius:4px;"><button type="button" onclick="PG.chk.files.splice(${i},1);pgChkRefresh()" style="position:absolute;top:-6px;right:-6px;background:#b00020;color:#fff;border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;line-height:18px;">&times;</button></div>`).join('')}</div>` : '';
+  const rs = document.getElementById('pgChkResult');
+  if(rs) rs.innerHTML = pgChkResultHTML();
+  pgChkLoadList();
+}
+function pgResizeImage(file){
+  return new Promise((res,rej)=>{
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = ()=>{
+      const k = Math.min(1, 1600/Math.max(img.width,img.height));
+      const c = document.createElement('canvas'); c.width = Math.round(img.width*k); c.height = Math.round(img.height*k);
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      URL.revokeObjectURL(url); res(c.toDataURL('image/jpeg',0.8));
+    };
+    img.onerror = ()=>{ URL.revokeObjectURL(url); rej(new Error('Could not open image '+file.name)); };
+    img.src = url;
+  });
+}
+async function pgPdfToImages(file, max){
+  await pgLoadPdfJs();
+  const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  const out = [];
+  for(let p=1; p<=Math.min(pdf.numPages, max); p++){
+    const page = await pdf.getPage(p);
+    const vp = page.getViewport({ scale:1.6 });
+    const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height;
+    await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+    out.push(c.toDataURL('image/jpeg',0.8));
+  }
+  return out;
+}
+async function pgChkFiles(list){
+  if(!pgOK()) return;
+  const st = document.getElementById('pgChkStatus');
+  try{
+    for(const f of Array.from(list)){
+      if(PG.chk.files.length >= 8){ st.innerHTML = '<div class="msg-err">Only 8 pages at a time.</div>'; break; }
+      st.innerHTML = `<p class="note-inline">Preparing ${esc(f.name)}&hellip;</p>`;
+      if(/\.pdf$/i.test(f.name) || f.type==='application/pdf') (await pgPdfToImages(f, 8-PG.chk.files.length)).forEach(d=>PG.chk.files.push(d));
+      else PG.chk.files.push(await pgResizeImage(f));
+    }
+    st.innerHTML = '';
+  }catch(e){ console.error(e); st.innerHTML = `<div class="msg-err">${esc(e.message||'Could not read the file')}</div>`; }
+  const inp = document.getElementById('pgChkFile'); if(inp) inp.value = '';
+  pgChkRefresh();
+}
+async function pgCheckSheet(){
+  if(!pgOK()) return;
+  const st = document.getElementById('pgChkStatus');
+  const p = pgChkPaper();
+  PG.chk.roll = (document.getElementById('pgChkRoll').value||'').trim();
+  if(!p){ st.innerHTML = '<div class="msg-err">Choose a saved paper.</div>'; return; }
+  if(!PG.chk.roll){ st.innerHTML = '<div class="msg-err">Enter the student\'s roll number.</div>'; return; }
+  if(!PG.chk.files.length){ st.innerHTML = '<div class="msg-err">Add at least one photo or PDF of the solved paper.</div>'; return; }
+  const qs = pgChkQuestions(p);
+  const qText = qs.map(q=>`Q${q.no} [${q.max} marks, ${q.type}]: ${q.text}\nModel answer: ${q.answer||'(not provided - use your own correct knowledge)'}`).join('\n\n');
+  const system = 'You are a fair, careful teacher marking one student\'s handwritten answer sheet for Class '+PG.cls+', subject '+PG.subject+'. Reply with ONLY valid JSON, no commentary, no markdown fences.';
+  const user = `QUESTION PAPER WITH MODEL ANSWERS:\n${qText}\n\nThe attached images are the pages of ONE student's solved answer sheet. For every question Q1 to Q${qs.length}: find the student's answer (match by question number), compare it with the model answer, and give marks from 0 to the maximum in steps of 0.5 (partial marks for partly correct work). If a question was not attempted give 0 and write "Not attempted". Never invent text the student did not write. If the handwriting is hard to read, set confidence to "low". Write the "mistake" notes in ${PG.chk.lang}, short and specific.\nReturn ONLY this JSON: {"rows":[{"no":1,"seen":"short quote of what the student wrote","marks":0,"mistake":"what is wrong or missing, empty if fully correct","confidence":"high|medium|low"}],"note":"one-line overall remark"} with exactly one row for each question.`;
+  st.innerHTML = '<p class="note-inline">The AI is reading the sheet&hellip; this can take 1&ndash;2 minutes.</p>';
+  try{
+    const out = await pgClaude(system, user, 8000, PG.chk.files);
+    const a = out.indexOf('{'), b = out.lastIndexOf('}');
+    if(a<0 || b<=a) throw new Error('The AI reply could not be read. Try again (clearer photos help).');
+    const data = JSON.parse(out.slice(a, b+1));
+    const got = {}; (data.rows||[]).forEach(r=>{ got[r.no] = r; });
+    PG.chk.res = {
+      roll: PG.chk.roll, paperId: p.id, note: String(data.note||''),
+      rows: qs.map(q=>{
+        const r = got[q.no];
+        const m = r ? Math.max(0, Math.min(q.max, parseFloat(r.marks)||0)) : 0;
+        return { no:q.no, text:q.text, max:q.max, marks:m, seen: r ? String(r.seen||'') : '', mistake: r ? String(r.mistake||'') : 'Not found on the sheet', conf: r ? String(r.confidence||'medium').toLowerCase() : 'low' };
+      })
+    };
+    st.innerHTML = '<div class="msg-ok">Done. Check the marks below, fix anything wrong, then save.</div>';
+    pgChkRefresh();
+  }catch(e){ console.error(e); st.innerHTML = `<div class="msg-err">${esc(e.message||'AI request failed')}</div>`; }
+}
+function pgChkTotText(){ const t = pgChkTotals(PG.chk.res.rows); return t.got+' / '+t.max; }
+function pgChkResultHTML(){
+  const r = PG.chk.res;
+  if(!r) return '';
+  return `
+    <h3 style="font-size:15px;margin-top:20px;">Roll No ${esc(r.roll)} &mdash; <span id="pgChkTot">${pgChkTotText()}</span></h3>
+    ${r.note ? `<p class="note-inline">${esc(r.note)}</p>` : ''}
+    <div style="overflow-x:auto;"><table>
+      <tr><th>Q</th><th>Question / what the student wrote</th><th>Marks</th><th>Mistakes</th></tr>
+      ${r.rows.map((x,i)=>`<tr style="${x.conf==='low'?'background:#fff6e5;':''}">
+        <td>${x.no}</td>
+        <td dir="auto" style="min-width:200px;white-space:pre-line;">${esc(pgShort(x.text,140))}${x.seen?`<br><small style="color:var(--muted);">Student wrote: ${esc(pgShort(x.seen,160))}</small>`:''}${x.conf==='low'?'<br><small style="color:#b00020;">&#9888; hard to read &mdash; please check this one yourself</small>':''}</td>
+        <td style="white-space:nowrap;"><input type="number" min="0" max="${x.max}" step="0.5" value="${x.marks}" style="width:70px;padding:6px;border:1px solid var(--line);border-radius:6px;" oninput="pgChkSetMarks(${i},this.value)"> / ${x.max}</td>
+        <td><textarea rows="2" dir="auto" style="min-width:200px;width:100%;padding:6px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:13px;" oninput="PG.chk.res.rows[${i}].mistake=this.value">${esc(x.mistake)}</textarea></td>
+      </tr>`).join('')}
+    </table></div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
+      <button type="button" class="btn-gold" onclick="pgChkSave()">Save this student</button>
+      <button type="button" class="tag-btn" onclick="pgChkPrintReport(PG.chk.res)">Print mistakes report</button>
+      <button type="button" class="tag-btn ghost" onclick="PG.chk.res=null;PG.chk.files=[];pgChkRefresh()">Discard</button>
+    </div>`;
+}
+function pgChkSetMarks(i, v){
+  const x = PG.chk.res.rows[i];
+  x.marks = Math.max(0, Math.min(x.max, parseFloat(v)||0));
+  const t = document.getElementById('pgChkTot'); if(t) t.textContent = pgChkTotText();
+}
+function pgChkDocId(paperId, roll){ return 'check__'+paperId+'__'+String(roll).replace(/[\/\s]+/g,'_'); }
+async function pgChkSave(){
+  if(!pgOK() || !PG.chk.res) return;
+  const r = PG.chk.res, p = pgChkPaper(); if(!p) return;
+  const enr = (DB.enrollments||[]).find(e=>String(e.rollNo)===String(r.roll) && e.className===PG.cls && String(e.session)===String(PG.chk.session));
+  const stu = enr ? (DB.students||[]).find(s=>s.id===enr.studentId) : null;
+  const t = pgChkTotals(r.rows);
+  const doc = { kind:'check', paperId:p.id, roll:String(r.roll), name: stu ? stu.name : '', session:String(PG.chk.session), cls:PG.cls, subject:PG.subject,
+    rows: r.rows.map(x=>({ no:x.no, max:x.max, marks:x.marks, mistake:x.mistake, conf:x.conf })), note:r.note||'', total:t.got, max:t.max, savedAt:new Date().toISOString() };
+  const st = document.getElementById('pgChkStatus');
+  try{
+    await fsDb.collection(PG_COLLECTION).doc(pgChkDocId(p.id, r.roll)).set(doc);
+    PG.chk.res = null; PG.chk.files = []; PG.chk.roll = '';
+    const inp = document.getElementById('pgChkRoll'); if(inp) inp.value = '';
+    if(st) st.innerHTML = `<div class="msg-ok">Saved: Roll ${esc(doc.roll)} &mdash; ${t.got} / ${t.max}.</div>`;
+    pgChkRefresh();
+  }catch(e){ console.error(e); if(st) st.innerHTML = `<div class="msg-err">Save failed: ${esc(e.message||'')}</div>`; }
+}
+async function pgChkLoadList(){
+  const box = document.getElementById('pgChkList');
+  if(!box || !pgOK() || !PG.chk.paperId) return;
+  try{
+    const snap = await fsDb.collection(PG_COLLECTION).where('paperId','==',PG.chk.paperId).get();
+    PG.chk.list = [];
+    snap.forEach(d=>{ const x = d.data(); if(x.kind==='check') PG.chk.list.push({ docId:d.id, ...x }); });
+  }catch(e){ console.error(e); box.innerHTML = '<div class="msg-err">Could not load saved checks.</div>'; return; }
+  const list = [...PG.chk.list].sort((a,b)=>b.total-a.total);
+  const rank = x=>1+list.filter(y=>y.total>x.total).length;
+  if(!list.length){ box.innerHTML = ''; return; }
+  box.innerHTML = `
+    <h3 style="font-size:15px;margin-top:24px;">Checked so far &mdash; ${list.length} student(s)</h3>
+    <div style="overflow-x:auto;"><table>
+      <tr><th>Position</th><th>Roll No</th><th>Name</th><th>Marks</th><th>%</th><th></th></tr>
+      ${list.map(x=>`<tr><td>${rank(x)}</td><td>${esc(x.roll)}</td><td>${esc(x.name||'-')}</td><td>${x.total} / ${x.max}</td><td>${x.max?Math.round(x.total/x.max*1000)/10:0}%</td>
+        <td style="white-space:nowrap;"><button type="button" class="tag-btn" style="padding:4px 10px;font-size:12px;" onclick="pgChkSendResult(['${x.docId}'])">Send to Result</button>
+        <button type="button" class="tag-btn ghost" style="padding:4px 10px;font-size:12px;" onclick="pgChkOpen('${x.docId}')">Open / Edit</button>
+        <button type="button" class="tag-btn ghost" style="padding:4px 10px;font-size:12px;" onclick="pgChkPrintReport(pgChkFromDoc('${x.docId}'))">Report</button>
+        <button type="button" class="tag-btn danger" style="padding:4px 10px;font-size:12px;" onclick="pgChkDelete('${x.docId}')">Delete</button></td></tr>`).join('')}
+    </table></div>
+    <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;"><button type="button" class="btn-gold" onclick="pgChkSendResult(PG.chk.list.map(x=>x.docId))">Send all to Result card</button><button type="button" class="tag-btn" onclick="pgChkPrintList()">Print result list</button></div>
+    <p class="note-inline" style="margin-top:8px;">"Send to Result" puts each student's marks for <b>${esc(PG.subject)}</b> into that student's result for session ${esc(PG.chk.session)}, replacing the old marks of this subject only. You see a summary and confirm first.</p>`;
+}
+function pgChkFromDoc(docId){
+  const x = PG.chk.list.find(y=>y.docId===docId), p = pgChkPaper();
+  if(!x || !p) return null;
+  const qs = pgChkQuestions(p), byNo = {}; qs.forEach(q=>{ byNo[q.no] = q; });
+  return { roll:x.roll, paperId:x.paperId, note:x.note||'', rows: x.rows.map(r=>({ ...r, text: byNo[r.no] ? byNo[r.no].text : '', seen:'' })) };
+}
+function pgChkOpen(docId){
+  const r = pgChkFromDoc(docId); if(!r) return;
+  PG.chk.res = r; PG.chk.roll = r.roll;
+  pgChkRefresh();
+  setTimeout(()=>{ const e = document.getElementById('pgChkResult'); if(e) e.scrollIntoView({ behavior:'smooth' }); }, 50);
+}
+async function pgChkDelete(docId){
+  if(!pgOK() || !confirm('Delete this student\'s check?')) return;
+  try{ await fsDb.collection(PG_COLLECTION).doc(docId).delete(); }catch(e){ console.error(e); }
+  pgChkRefresh();
+}
+
+async function pgChkSendResult(docIds){
+  if(!pgOK() || typeof setData!=='function') return;
+  const st = document.getElementById('pgChkStatus');
+  const p = pgChkPaper(); if(!p) return;
+  const session = String(PG.chk.session);
+  const items = [], skipped = [];
+  docIds.forEach(id=>{
+    const x = PG.chk.list.find(y=>y.docId===id); if(!x) return;
+    const en = (DB.enrollments||[]).find(e=>String(e.rollNo)===String(x.roll) && e.className===PG.cls && String(e.session)===session);
+    if(!en){ skipped.push(x.roll); return; }
+    items.push({ x, en });
+  });
+  if(!items.length){ if(st) st.innerHTML = `<div class="msg-err">No matching enrolled student found for class ${esc(PG.cls)}, session ${esc(session)}${skipped.length?' (roll '+skipped.map(esc).join(', ')+')':''}. Check the Session field above.</div>`; return; }
+  const lines = items.map(({x})=>{
+    const old = (DB.results.find(r=>String(r.rollNo)===String(x.roll) && String(r.session)===session)||{}).subjects;
+    const o = (old||[]).find(s=>s.subject===PG.subject);
+    return `Roll ${x.roll}: ${PG.subject} ${x.total}/${x.max}` + (o ? `  (was ${o.obtained}/${o.total})` : '  (new)');
+  });
+  const shown = lines.slice(0,15).join('\n') + (lines.length>15 ? `\n…and ${lines.length-15} more` : '');
+  if(!confirm(`Put these marks into the Result card (class ${PG.cls}, session ${session})?\n\n${shown}\n\nOther subjects stay unchanged.${skipped.length?'\n\nSkipped (not enrolled): roll '+skipped.join(', '):''}`)) return;
+  items.forEach(({x})=>{
+    const entry = { subject:PG.subject, obtained:String(x.total), total:String(x.max) };
+    const i = DB.results.findIndex(r=>String(r.rollNo)===String(x.roll) && String(r.session)===session);
+    if(i>=0){
+      const subs = (DB.results[i].subjects||[]).slice();
+      const k = subs.findIndex(s=>s.subject===PG.subject);
+      if(k>=0) subs[k] = entry; else subs.push(entry);
+      DB.results[i] = { ...DB.results[i], subjects:subs };
+    } else {
+      DB.results.push({ id:uid(), rollNo:String(x.roll), session, className:PG.cls, subjects:[entry] });
+    }
+  });
+  try{
+    await setData('results', DB.results);
+    if(st) st.innerHTML = `<div class="msg-ok">${items.length} result(s) updated. They now show on the Result card.${skipped.length?' Skipped (not enrolled): roll '+skipped.map(esc).join(', ')+'.':''}</div>`;
+  }catch(e){ console.error(e); if(st) st.innerHTML = `<div class="msg-err">Could not update results: ${esc(e.message||'')}</div>`; }
+}
+function pgChkPrintReport(r){
+  if(!r) return;
+  const p = pgChkPaper(); const t = pgChkTotals(r.rows);
+  printHTML(`<div style="font-family:'Times New Roman',serif;color:#000;font-size:14px;line-height:1.5;">
+    ${schoolBrandHTML('Answer Sheet Report')}
+    <p style="font-size:13px;"><b>Class:</b> ${esc(PG.cls)} &nbsp; <b>Subject:</b> ${esc(PG.subject)} &nbsp; <b>Roll No:</b> ${esc(r.roll)} &nbsp; <b>Exam:</b> ${esc(p?p.exam||'':'')} &nbsp; <b>Marks:</b> ${t.got} / ${t.max}</p>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;" border="1" cellpadding="5">
+      <tr><th>Q</th><th>Question</th><th>Marks</th><th>Mistakes / remarks</th></tr>
+      ${r.rows.map(x=>`<tr><td>${x.no}</td><td dir="auto" style="white-space:pre-line;">${esc(pgShort(x.text,150))}</td><td style="white-space:nowrap;">${x.marks} / ${x.max}</td><td dir="auto" style="white-space:pre-line;">${esc(x.mistake||'')}</td></tr>`).join('')}
+    </table>${r.note?`<p style="margin-top:10px;"><b>Remark:</b> ${esc(r.note)}</p>`:''}</div>`);
+}
+function pgChkPrintList(){
+  const p = pgChkPaper(); if(!p) return;
+  const list = [...PG.chk.list].sort((a,b)=>b.total-a.total);
+  const rank = x=>1+list.filter(y=>y.total>x.total).length;
+  printHTML(`<div style="font-family:'Times New Roman',serif;color:#000;font-size:14px;">
+    ${schoolBrandHTML((p.exam||'Examination')+' — Result')}
+    <p style="font-size:13px;"><b>Class:</b> ${esc(PG.cls)} &nbsp; <b>Subject:</b> ${esc(PG.subject)} &nbsp; <b>Total Marks:</b> ${pgPaperTotal(p)}</p>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;" border="1" cellpadding="5">
+      <tr><th>Position</th><th>Roll No</th><th>Name</th><th>Marks</th><th>%</th></tr>
+      ${list.map(x=>`<tr><td>${rank(x)}</td><td>${esc(x.roll)}</td><td>${esc(x.name||'')}</td><td>${x.total} / ${x.max}</td><td>${x.max?Math.round(x.total/x.max*1000)/10:0}%</td></tr>`).join('')}
+    </table></div>`);
+}
+
 
 </script>
 </body>
