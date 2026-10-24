@@ -4104,7 +4104,7 @@ async function deleteResult(id){
 const PG_COLLECTION = 'paper_bank';
 const PG_TYPES = ['MCQ','Fill','TF','Match','Short','Long'];
 const PG_TYPE_LABEL = { MCQ:'Multiple Choice Questions', Fill:'Fill in the Blanks', TF:'True / False (✓ or ✗)', Match:'Match the Columns', Short:'Short Questions', Long:'Long Questions' };
-const PG_SOURCES = ['Exercise','Conceptual'];
+const PG_SOURCES = ['Exercise','Past Paper','Additional','Conceptual'];
 const PG_DEFAULT_MARKS = { MCQ:1, Fill:1, TF:1, Match:5, Short:2, Long:5 };
 let PG = { cls:'', subject:'', bank:[], tab:'bank', imp:[], impMsg:'', paper:null, sel:{}, msg:'', editId:'', flt:{chapter:'',type:'',source:''}, saved:[], cfg:{apiKey:''}, src:[], lastText:'' };
 
@@ -4145,7 +4145,7 @@ function renderPaperGenerator(){
     return;
   }
   const subs = PG.cls ? (DB.classSubjects[PG.cls] || []) : [];
-  const tabs = [['smart','Smart Paper'],['bank','Question Bank'],['import','Import PDF'],['ai','AI Questions'],['check','Check Sheets'],['manual','Manual'],['auto','Auto'],['saved','Saved']];
+  const tabs = [['auto','Generate Test'],['import','Import PDF'],['bank','Question Bank'],['manual','Manual'],['smart','Smart Paper (AI)'],['ai','AI Questions'],['check','Check Sheets'],['saved','Saved']];
   box.innerHTML = `
     <h3>Paper Generator <span style="font-size:11px;background:var(--navy-900);color:#fff;padding:2px 8px;border-radius:10px;vertical-align:middle;">ADMIN ONLY</span></h3>
     <p class="note-inline" style="margin:-6px 0 14px;">Build a question bank (exercise + conceptual past-paper questions), then make a paper manually or automatically. Only this admin account can see or use any of this.</p>
@@ -4185,6 +4185,7 @@ function pgRenderBody(){
   const b = document.getElementById('pgBody');
   if(!b) return;
   if(PG.tab==='saved'){ b.innerHTML = pgSavedHTML(); return; }
+  if(PG.tab==='smart' && PG.cls && !PG.subject){ b.innerHTML = pgLibraryHTML(); pgLoadLibrary(); return; }
   if(!PG.cls || !PG.subject){ b.innerHTML = pgNeedScope(); return; }
   if(PG.tab==='bank') b.innerHTML = pgBankHTML();
   else if(PG.tab==='import') b.innerHTML = pgImportHTML();
@@ -4267,8 +4268,12 @@ function pgImportHTML(){
   return `
     <p class="note-inline" style="margin:0 0 12px;">Upload a book / notes / past paper PDF (or a .txt file), or paste text. The text is read inside your browser &mdash; the file itself is <b>not</b> uploaded anywhere. Questions are detected, then you review and save the good ones.</p>
     <div class="row-2">
-      <div class="field"><label>These questions are from</label><select id="pgImpSource">${pgOpts(PG_SOURCES,'Exercise')}</select></div>
+      <div class="field"><label>These questions are from</label><select id="pgImpSource" onchange="document.getElementById('pgImpOnlyEx').checked=(this.value==='Exercise')">${pgOpts(PG_SOURCES,'Exercise')}</select></div>
       <div class="field"><label>PDF or text file</label><input type="file" id="pgImpFile" accept=".pdf,.txt,application/pdf,text/plain"></div>
+    </div>
+    <div class="row-2">
+      <div class="field"><label>Unit / chapter for all these questions (optional &mdash; use for past papers)</label><input id="pgImpChap" placeholder="e.g. Unit 3: Motion"></div>
+      <label style="display:flex;gap:8px;align-items:center;font-weight:400;"><input type="checkbox" id="pgImpOnlyEx" style="width:auto;" checked> Book: read only the Exercise / Review-questions parts (untick for past papers)</label>
     </div>
     <div class="field"><label>&hellip;or paste text here</label><textarea id="pgImpText" rows="5" dir="auto" placeholder="Chapter 1: ...&#10;Q1. What is ...?&#10;Q2. Define ..."></textarea></div>
     <button type="button" class="btn-gold" onclick="pgExtract()">Find Questions</button>
@@ -4303,30 +4308,54 @@ async function pgExtractPdf(file, status){
   }
   return out;
 }
-function pgParse(text, source){
+function pgSecType(l){
+  const t = l.toLowerCase();
+  if(!t || t.length>140 || t.indexOf('?')>-1) return '';
+  if(/true\s*(or|\/|and)\s*false|\bt\s*\/\s*f\b|write\s+t\s+for|tick\s*\(?\s*✓?\s*\)?\s*or\s*cross|صحیح\s*یا\s*غلط|درست\s*یا\s*غلط/.test(t)) return 'TF';
+  if(/fill\s+in\s+the\s+blank|fill\s+the\s+blank|fill\s+in\s+blank|خالی\s*جگہ/.test(t)) return 'Fill';
+  if(/match\s+the|match\s+column|جوڑ/.test(t)) return 'Match';
+  if(/multiple\s+choice|\bmcqs?\b|choose\s+the\s+(correct|right|best)|tick\s+the\s+(correct|right)|select\s+the\s+correct|encircle|circle\s+the\s+correct|صحیح\s*جواب|درست\s*جواب|کثیر/.test(t)) return 'MCQ';
+  if(/long\s+questions?|descriptive|in\s+detail|detailed|تفصیل/.test(t)) return 'Long';
+  if(/short\s+questions?|short\s+answers?|brief(ly)?|answer\s+the\s+following|مختصر/.test(t)) return 'Short';
+  return '';
+}
+function pgParse(text, source, onlyEx, chapterAll){
   const lines = text.split(/\r?\n/).map(l=>l.replace(/\s+/g,' ').trim()).filter(Boolean);
-  const chapRe = /^(chapter|unit|lesson|topic|باب|سبق)\b.{0,80}$/i;
+  const chapRe = /^((chapter|unit|lesson)\s*[:\-#.]?\s*\d+|باب|سبق)/i;
+  const exRe = /^(exercises?|review\s+questions?|end\s+of\s+(the\s+)?chapter\s+questions?|questions?|additional\s+questions?|مشق|مشقیں|سوالات|تمرین)\s*[:\-–]?\s*\d*\.?\d*\s*$/i;
   const startRe = /^(?:Q\.?\s*\d+\s*[\.\):\-]?|Ex(?:ercise)?\.?\s*\d+(?:\.\d+)?\s*[\.\):\-]?|\d{1,3}\s*[\.\)]|\(\d{1,3}\)|\(?[ivxIVX]{1,4}\)\s)\s*/;
-  const out = []; let cur = null, chapter = '';
+  const ansRe = /^(?:ans(?:wer)?|solution|sol|جواب|حل)\s*[:\-–]\s*(.*)$/i;
+  const out = []; let cur = null, chapter = '', inEx = !onlyEx, secType = '';
   const flush = ()=>{
-    if(cur){
-      const joined = cur.lines.join(' ');
-      const isMcq = /(\(a\)|\ba\)|\bA[\.\)])\s.+(\(b\)|\bb\)|\bB[\.\)])\s/i.test(joined) || cur.lines.length>=4 && cur.lines.slice(1).every(l=>/^\(?[a-dA-D][\)\.]/.test(l));
-      const textOut = (isMcq ? cur.lines.join('\n') : joined).trim();
-      if(textOut.length >= 12){
-        const type = isMcq ? 'MCQ' : (textOut.length>170 || /\b(explain|describe|discuss|derive|prove|elaborate|write a note|compare)\b|تفصیل|وضاحت/i.test(textOut) ? 'Long' : 'Short');
-        out.push({ id: uid(), text: textOut.slice(0,1500), type, source, chapter: cur.chapter, marks: PG_DEFAULT_MARKS[type], answer: cur.ans.join('\n').trim().slice(0,3000), keep:true });
-      }
-    }
+    if(!cur) return;
+    const joined = cur.lines.join(' ');
+    const optsMcq = /(\(a\)|\ba\)|\bA[\.\)])\s.+(\(b\)|\bb\)|\bB[\.\)])\s/i.test(joined) || (cur.lines.length>=4 && cur.lines.slice(1).every(l=>/^\(?[a-dA-D][\)\.]/.test(l)));
+    let type;
+    if(cur.raw) type = 'Match';
+    else if(optsMcq) type = 'MCQ';
+    else if(cur.sec) type = cur.sec;
+    else if(/_{3,}|\.{5,}|…{2,}/.test(joined)) type = 'Fill';
+    else type = (joined.length>170 || /\b(explain|describe|discuss|derive|prove|elaborate|write a note|compare)\b|تفصیل|وضاحت/i.test(joined)) ? 'Long' : 'Short';
+    const textOut = ((type==='MCQ' || type==='Match') ? cur.lines.join('\n') : joined).trim();
+    if(textOut.length >= 12) out.push({ id:uid(), text:textOut.slice(0,1500), type, source, chapter:cur.chapter || chapterAll || '', marks:PG_DEFAULT_MARKS[type], answer:cur.ans.join('\n').trim().slice(0,3000), keep:true });
     cur = null;
   };
   lines.forEach(l=>{
-    if(chapRe.test(l) && l.length<90){ flush(); chapter = l; return; }
-    const ansM = l.match(/^(?:ans(?:wer)?|solution|sol|جواب|حل)\s*[:\-–]\s*(.*)$/i);
-    if(cur && ansM){ cur.inAns = true; if(ansM[1]) cur.ans.push(ansM[1]); return; }
+    if(chapRe.test(l) && l.length<90){ flush(); chapter = l; secType = ''; inEx = !onlyEx; return; }
+    if(exRe.test(l)){ flush(); inEx = true; secType = ''; return; }
+    if(!inEx) return;
+    const sec = pgSecType(l.replace(startRe,''));
+    if(sec){
+      flush(); secType = sec;
+      if(sec==='Match') cur = { lines:[l.replace(startRe,'').trim()], chapter, ans:[], inAns:false, sec, raw:true };
+      return;
+    }
+    if(cur && cur.raw){ cur.lines.push(l); return; }
+    const am = l.match(ansRe);
+    if(cur && am){ cur.inAns = true; if(am[1]) cur.ans.push(am[1]); return; }
     if(cur && cur.inAns && !/^Q\.?\s*\d+/i.test(l)){ cur.ans.push(l); return; }
     const m = l.match(startRe);
-    if(m && m[0].length && l.length > m[0].length){ flush(); cur = { lines:[l.slice(m[0].length).trim()], chapter, ans:[], inAns:false }; }
+    if(m && m[0].length && l.length > m[0].length){ flush(); cur = { lines:[l.slice(m[0].length).trim()], chapter, ans:[], inAns:false, sec:secType }; }
     else if(cur && cur.lines.join(' ').length < 1500){ cur.lines.push(l); }
   });
   flush();
@@ -4345,7 +4374,7 @@ async function pgExtract(){
     }
     if(!text.trim()){ status.innerHTML = '<div class="msg-err">Choose a file or paste some text first.</div>'; return; }
     PG.lastText = text; PG.lastName = file ? file.name.replace(/\.[^.]+$/,'') : '';
-    PG.imp = pgParse(text, source).slice(0, 800);
+    PG.imp = pgParse(text, source, !!(document.getElementById('pgImpOnlyEx')||{}).checked, ((document.getElementById('pgImpChap')||{}).value||'').trim()).slice(0, 2000);
     PG.impMsg = PG.imp.length
       ? `<div class="msg-ok">${PG.imp.length} possible questions found. Fix anything that looks wrong, untick the ones you don't want, then save.</div>`
       : '<div class="msg-err">No questions detected. If this is a scanned/photo PDF or Urdu text that copied badly, paste the text manually or add questions one by one in the Question Bank tab.</div>';
@@ -4414,8 +4443,8 @@ function pgManualHTML(){
         <span dir="auto" style="flex:1;white-space:pre-line;font-size:14px;">${esc(pgShort(q.text,260))}<br><small style="color:var(--muted);">${esc(q.type)} &middot; ${esc(q.source)} &middot; ${esc(q.chapter||'no chapter')} &middot; ${esc(q.marks)} marks${q.used?` &middot; used ${q.used}×`:''}</small></span></label>`).join('') || '<div class="empty" style="padding:14px;">No questions match this filter.</div>'}
     </div>`;
 }
-function pgNewPaper(sections){
-  return { id: uid(), cls:PG.cls, subject:PG.subject, exam:'', date:new Date().toISOString().slice(0,10), time:'', sections };
+function pgNewPaper(sections, order){
+  return { id: uid(), cls:PG.cls, subject:PG.subject, exam:'', date:new Date().toISOString().slice(0,10), time:'', sections, order: order || null };
 }
 function pgBuildManual(){
   if(!pgOK()) return;
@@ -4429,52 +4458,6 @@ function pgBuildManual(){
 }
 
 /* ---------------- AUTO PAPER ---------------- */
-function pgAutoHTML(){
-  if(!PG.bank.length) return '<div class="empty">The bank is empty. Add or import questions first.</div>';
-  const avail = (t,s)=>PG.bank.filter(q=>q.type===t && q.source===s).length;
-  const chs = pgChapters();
-  const inp = (id,v,w)=>`<input type="number" min="0" id="${id}" value="${v}" style="width:${w||70}px;padding:6px;border:1px solid var(--line);border-radius:6px;">`;
-  return `
-    <p class="note-inline" style="margin:0 0 12px;">Say how many questions you want of each kind and the system picks them at random from the bank.</p>
-    <div style="overflow-x:auto;"><table>
-      <tr><th>Section</th><th>Exercise (have)</th><th>Conceptual (have)</th><th>Marks each</th></tr>
-      ${PG_TYPES.map(t=>`<tr><td>${esc(PG_TYPE_LABEL[t])}</td>
-        <td>${inp('pgA_'+t+'_Exercise', 0)} <small>(${avail(t,'Exercise')})</small></td>
-        <td>${inp('pgA_'+t+'_Conceptual', 0)} <small>(${avail(t,'Conceptual')})</small></td>
-        <td>${inp('pgA_'+t+'_marks', PG_DEFAULT_MARKS[t], 60)}</td></tr>`).join('')}
-    </table></div>
-    <div class="field" style="margin-top:14px;"><label>Chapters to include</label>
-      ${chs.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px 16px;">${chs.map((c,i)=>`<label style="font-weight:400;display:flex;gap:6px;align-items:center;"><input type="checkbox" style="width:auto;" class="pgChap" value="${esc(c)}" checked> ${esc(c)}</label>`).join('')}</div>` : '<p class="note-inline">No chapters tagged &mdash; all questions will be used.</p>'}
-    </div>
-    <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:14px;"><input type="checkbox" id="pgAvoidUsed" style="width:auto;" checked> Prefer questions that were not used in earlier saved papers</label>
-    <button type="button" class="btn-gold" onclick="pgGenerateAuto()">Generate Paper</button>`;
-}
-function pgGenerateAuto(){
-  if(!pgOK()) return;
-  const chapEls = [...document.querySelectorAll('.pgChap')];
-  const chapters = chapEls.filter(c=>c.checked).map(c=>c.value);
-  const useChapterFilter = chapEls.length > 0;
-  const avoid = document.getElementById('pgAvoidUsed').checked;
-  const sec = {}, short = [];
-  PG_TYPES.forEach(t=>{
-    const marks = parseFloat(document.getElementById('pgA_'+t+'_marks').value) || PG_DEFAULT_MARKS[t];
-    sec[t] = [];
-    PG_SOURCES.forEach(s=>{
-      const n = parseInt(document.getElementById('pgA_'+t+'_'+s).value) || 0;
-      if(!n) return;
-      let pool = PG.bank.filter(q=>q.type===t && q.source===s && (!useChapterFilter || !q.chapter || chapters.includes(q.chapter)));
-      const picked = avoid ? pgPickLeastUsed(pool, n) : pgShuffle(pool).slice(0,n);
-      if(picked.length < n) short.push(`${t} / ${s}: wanted ${n}, only ${picked.length} available`);
-      picked.forEach(q=>sec[t].push({ ...q, marks }));
-    });
-  });
-  if(!Object.values(sec).some(a=>a.length)){ pgSet('<div class="msg-err">Enter at least one question count above 0.</div>'); renderPaperGenerator(); return; }
-  PG.paper = pgNewPaper(sec);
-  pgSet(`<div class="msg-ok">Paper generated — scroll down to review, replace questions, and print.</div>` + (short.length ? `<div class="msg-err">Not enough questions: ${short.map(esc).join('; ')}.</div>` : ''));
-  renderPaperGenerator();
-  setTimeout(()=>{ const w=document.getElementById('pgPaperWrap'); if(w) w.scrollIntoView({behavior:'smooth'}); }, 50);
-}
-
 /* ---------------- PAPER EDITOR (replace / edit / print / save) ---------------- */
 function pgPaperTotal(p){ return PG_TYPES.reduce((s,t)=>s+(p.sections[t]||[]).reduce((a,q)=>a+(+q.marks||0),0),0); }
 function pgRenderPaper(){
@@ -4492,11 +4475,11 @@ function pgRenderPaper(){
       <div class="field"><label>Date</label><input type="date" value="${esc(p.date)}" oninput="PG.paper.date=this.value"></div>
     </div>
     <div class="field"><label>Time allowed</label><input value="${esc(p.time)}" placeholder="e.g. 2 hours" oninput="PG.paper.time=this.value"></div>
-    ${PG_TYPES.map(t=>{
+    ${pgOrder(p).map(t=>{
       const qs = p.sections[t] || [];
       if(!qs.length) return '';
       const pool = PG.bank.filter(q=>q.type===t && !inPaper.has(q.id));
-      return `<div style="margin-top:14px;"><div style="font-weight:700;color:var(--navy-900);margin-bottom:6px;">${esc(PG_TYPE_LABEL[t])}</div>
+      return `<div style="margin-top:14px;"><div style="font-weight:700;color:var(--navy-900);margin-bottom:6px;display:flex;gap:6px;align-items:center;">${esc(PG_TYPE_LABEL[t])} <button type="button" class="tag-btn ghost" style="padding:1px 8px;font-size:12px;" title="Move section up" onclick="pgMoveSec('${t}',-1)">&uarr;</button><button type="button" class="tag-btn ghost" style="padding:1px 8px;font-size:12px;" title="Move section down" onclick="pgMoveSec('${t}',1)">&darr;</button></div>
         ${qs.map((q,i)=>{ n++; return `
         <div style="border:1px solid var(--line);border-radius:6px;padding:10px;margin-bottom:8px;background:#fff;">
           <div style="display:flex;gap:8px;align-items:flex-start;">
@@ -4546,7 +4529,7 @@ function pgReplaceWith(type, idx, id){
 function pgRemoveQ(type, idx){ PG.paper.sections[type].splice(idx,1); pgRenderPaper(); }
 function pgPaperHTML(p){
   let n = 0;
-  const sections = PG_TYPES.filter(t=>(p.sections[t]||[]).length).map((t,si)=>{
+  const sections = pgOrder(p).filter(t=>(p.sections[t]||[]).length).map((t,si)=>{
     const qs = p.sections[t];
     const sum = qs.reduce((a,q)=>a+(+q.marks||0),0);
     return `<div style="margin-top:16px;">
@@ -4567,7 +4550,7 @@ function pgPaperHTML(p){
 function pgPrintKey(){
   if(!pgOK() || !PG.paper) return;
   const p = PG.paper; let n = 0;
-  const rows = PG_TYPES.flatMap(t=>p.sections[t]||[]).map(q=>{ n++; return `<div style="margin-bottom:10px;page-break-inside:avoid;"><b>Q${n}.</b> <span dir="auto" style="white-space:pre-line;">${esc(pgShort(q.text,160))}</span><div dir="auto" style="margin:3px 0 0 28px;white-space:pre-line;"><b>Ans:</b> ${q.answer?esc(q.answer):'<i>not provided</i>'}</div></div>`; }).join('');
+  const rows = pgOrder(p).flatMap(t=>p.sections[t]||[]).map(q=>{ n++; return `<div style="margin-bottom:10px;page-break-inside:avoid;"><b>Q${n}.</b> <span dir="auto" style="white-space:pre-line;">${esc(pgShort(q.text,160))}</span><div dir="auto" style="margin:3px 0 0 28px;white-space:pre-line;"><b>Ans:</b> ${q.answer?esc(q.answer):'<i>not provided</i>'}</div></div>`; }).join('');
   printHTML(`<div style="font-family:'Times New Roman',serif;color:#000;font-size:14px;line-height:1.5;">${schoolBrandHTML('Answer Key — '+(p.exam||'Examination Paper'))}<p style="font-size:13px;"><b>Class:</b> ${esc(p.cls)} &nbsp; <b>Subject:</b> ${esc(p.subject)}</p>${rows}</div>`);
 }
 function pgPrint(){ if(!pgOK() || !PG.paper) return; printHTML(pgPaperHTML(PG.paper)); }
@@ -4684,7 +4667,7 @@ async function pgRemoveKey(){
 async function pgSaveSrc(){
   if(!pgOK() || !PG.lastText) return;
   const base = PG.lastName || '';
-  const chapRe = /^(chapter|unit|lesson|باب|سبق)\b.{0,80}$/i;
+  const chapRe = /^((chapter|unit|lesson)\s*[:\-#.]?\s*\d+|باب|سبق)/i;
   let chs = [], cur = { name: base || 'Full text', text:'' };
   PG.lastText.split(/\r?\n/).forEach(l=>{
     const t = l.replace(/\s+/g,' ').trim(); if(!t) return;
@@ -4692,8 +4675,7 @@ async function pgSaveSrc(){
     else cur.text += t + '\n';
   });
   if(cur.text.length>200) chs.push(cur);
-  // cut anything too long into parts of ~30k characters
-  const out = [];
+  const out = [];   // cut anything too long into parts of ~30k characters
   chs.forEach(c=>{
     if(c.text.length <= 36000){ out.push(c); return; }
     let part = '', n = 1;
@@ -4705,11 +4687,23 @@ async function pgSaveSrc(){
   });
   chs = out;
   if(!chs.length){ pgSet('<div class="msg-err">Not enough text to save.</div>'); renderPaperGenerator(); return; }
-  const map = {}; PG.src.forEach(c=>{ map[c.name]=c; }); chs.forEach(c=>{ map[c.name]=c; });
-  const all = Object.values(map);
-  if(new Blob([JSON.stringify(all)]).size > 900000){ pgSet('<div class="msg-err">Too much book text saved for this subject. Delete some chapters in the Smart Paper tab (or upload fewer chapters at a time).</div>'); renderPaperGenerator(); return; }
-  try{ await fsDb.collection(PG_COLLECTION).doc(pgSrcKey()).set({ chapters: all }); PG.src = all; pgSet(`<div class="msg-ok">${chs.length} chapter/part(s) saved. Now tick the chapters you want below.</div>`); }
-  catch(e){ console.error(e); pgSet('<div class="msg-err">Save failed: '+esc(e.message||'')+'</div>'); }
+  const st = document.getElementById('pgSmStatus');
+  try{
+    const key = (PG.cls+'__'+PG.subject).replace(/[\/\s]+/g,'_');
+    const entries = chs.map(c=>({ name:c.name, id:'srcc__'+key+'__'+pgHash(c.name), len:c.text.length, text:c.text }));
+    for(let i=0;i<entries.length;i+=300){
+      if(st) st.innerHTML = `<p class="note-inline">Saving the book&hellip; ${Math.min(i+300,entries.length)} of ${entries.length}</p>`;
+      const batch = fsDb.batch();
+      entries.slice(i,i+300).forEach(e=>batch.set(fsDb.collection(PG_COLLECTION).doc(e.id), { kind:'srctext', text:e.text }));
+      await batch.commit();
+    }
+    const map = {}; PG.src.forEach(c=>{ map[c.name]=c; });
+    entries.forEach(e=>{ PG.txt[e.id] = e.text; map[e.name] = { name:e.name, id:e.id, len:e.len }; });
+    const all = Object.values(map);
+    await fsDb.collection(PG_COLLECTION).doc(pgSrcKey()).set({ chapters: all });
+    PG.src = all;
+    pgSet(`<div class="msg-ok">Book saved: ${entries.length} chapter/part(s). It stays saved &mdash; you do not need to upload it again.</div>`);
+  }catch(e){ console.error(e); pgSet('<div class="msg-err">Save failed: '+esc(e.message||'')+'</div>'); }
   renderPaperGenerator();
 }
 function pgAiHTML(){
@@ -4724,7 +4718,7 @@ function pgAiHTML(){
   return `${keyBox}
     <p class="note-inline" style="margin:0 0 12px;">The AI reads the chapter and writes <b>conceptual</b> questions (understanding, not copy-paste from the exercise) with solutions. You review them first, then save to the bank. AI can make mistakes &mdash; always check before using in a real paper.</p>
     <div class="field"><label>Chapter (saved from an imported book)</label>
-      <select id="pgAiChap"><option value="">&mdash; paste text below instead &mdash;</option>${PG.src.map(c=>`<option value="${esc(c.name)}">${esc(c.name)} (${c.text.length} chars)</option>`).join('')}</select></div>
+      <select id="pgAiChap"><option value="">&mdash; paste text below instead &mdash;</option>${PG.src.map(c=>`<option value="${esc(c.name)}">${esc(c.name)} (${pgChLen(c)} chars)</option>`).join('')}</select></div>
     <div class="field"><label>&hellip;or paste chapter text / notes</label><textarea id="pgAiText" rows="4" dir="auto"></textarea></div>
     <div class="field"><label>Chapter name (used to tag the questions when pasting)</label><input id="pgAiChapName" placeholder="e.g. Chapter 3: Motion"></div>
     <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-bottom:12px;">
@@ -4741,7 +4735,7 @@ async function pgGenerateAI(){
   const sel = document.getElementById('pgAiChap').value;
   let text = document.getElementById('pgAiText').value.trim();
   const chap = sel || document.getElementById('pgAiChapName').value.trim();
-  if(!text && sel){ const c = PG.src.find(x=>x.name===sel); text = c ? c.text : ''; }
+  if(!text && sel){ const c = PG.src.find(x=>x.name===sel); text = c ? await pgSrcText(c) : ''; }
   if(!text){ st.innerHTML = '<div class="msg-err">Choose a saved chapter or paste some text.</div>'; return; }
   const n = { MCQ:parseInt(document.getElementById('pgAiMCQ').value)||0, Short:parseInt(document.getElementById('pgAiShort').value)||0, Long:parseInt(document.getElementById('pgAiLong').value)||0 };
   const total = n.MCQ+n.Short+n.Long;
@@ -4766,7 +4760,7 @@ async function pgGenerateAI(){
 }
 async function pgAiSolve(q){
   const c = PG.src.find(x=>x.name===q.chapter);
-  const ctx = c ? 'CHAPTER TEXT:\n'+c.text.slice(0,30000)+'\n\n' : '';
+  const ctx = c ? 'CHAPTER TEXT:\n'+(await pgSrcText(c)).slice(0,30000)+'\n\n' : '';
   const out = await pgClaude('You are an experienced school teacher. Give a clear, correct model answer suitable for Class '+PG.cls+' ('+PG.subject+'). Plain text only, no markdown. Answer in the same language as the question. For MCQs state the correct option and a one-line reason. For numerical problems show the steps.', ctx+'QUESTION:\n'+q.text, 1500);
   return out.trim();
 }
@@ -4796,7 +4790,7 @@ PG.chk = { paperId:'', session:String(new Date().getFullYear()), roll:'', lang:'
 function pgChkPaper(){ const s = PG.saved.find(x=>x.paper && x.paper.id===PG.chk.paperId); return s ? s.paper : null; }
 function pgChkQuestions(p){
   let n = 0;
-  return PG_TYPES.flatMap(t=>(p.sections[t]||[]).map(q=>({ no:++n, type:t, text:q.text, max:+q.marks||0, answer:q.answer||'' })));
+  return pgOrder(p).flatMap(t=>(p.sections[t]||[]).map(q=>({ no:++n, type:t, text:q.text, max:+q.marks||0, answer:q.answer||'' })));
 }
 function pgChkTotals(rows){
   return { got: rows.reduce((a,x)=>a+(+x.marks||0),0), max: rows.reduce((a,x)=>a+(+x.max||0),0) };
@@ -5056,7 +5050,6 @@ function pgChkPrintList(){
 
 
 /* ---------------- SMART PAPER: book PDF -> chapters -> choose types -> AI makes the paper ---------------- */
-PG.tab = 'smart';
 PG.sm = {
   chaps:{}, lang:'same', busy:false,
   use:{ MCQ:false, Fill:false, TF:false, Match:false, Short:false, Long:false },
@@ -5104,13 +5097,18 @@ function pgSmartHTML(){
   if(!(PG.cfg && PG.cfg.apiKey)) return '<p class="note-inline" style="margin:0 0 12px;">First save a free AI key &mdash; it is needed to make questions from the book.</p>' + pgAiHTML();
   const S = PG.sm;
   const chapRows = PG.src.length
-    ? PG.src.map((c,i)=>`<label style="display:flex;gap:8px;align-items:center;font-weight:400;padding:4px 0;"><input type="checkbox" style="width:auto;" ${S.chaps[c.name]?'checked':''} onchange="PG.sm.chaps[PG.src[${i}].name]=this.checked"> <span dir="auto">${esc(c.name)}</span> <small style="color:var(--muted);">(${c.text.length} chars)</small> <a href="#" onclick="pgSrcDelete(${i});return false;" style="color:#b00020;font-size:12px;margin-left:6px;">delete</a></label>`).join('')
+    ? PG.src.map((c,i)=>`<label style="display:flex;gap:8px;align-items:center;font-weight:400;padding:4px 0;"><input type="checkbox" style="width:auto;" ${S.chaps[c.name]?'checked':''} onchange="PG.sm.chaps[PG.src[${i}].name]=this.checked"> <span dir="auto">${esc(c.name)}</span> <small style="color:var(--muted);">(${pgChLen(c)} chars)</small> <a href="#" onclick="pgSrcDelete(${i});return false;" style="color:#b00020;font-size:12px;margin-left:6px;">delete</a></label>`).join('')
     : '<div class="empty">No book loaded yet &mdash; upload the PDF in Step 1.</div>';
   const num = (obj,t,w)=>`<input type="number" min="0" max="30" value="${obj[t]}" style="width:${w||62}px;padding:6px;border:1px solid var(--line);border-radius:6px;" oninput="PG.sm.${obj===S.ex?'ex':obj===S.co?'co':'marks'}['${t}']=parseFloat(this.value)||0">`;
   return `
-    <h4 style="margin:0 0 6px;">Step 1 &mdash; Upload the book (PDF)</h4>
-    <p class="note-inline" style="margin:0 0 8px;">Read inside your browser, then stored privately (admin only) chapter-wise. Upload one book / a few chapters at a time.</p>
-    <input type="file" accept=".pdf,.txt,application/pdf,text/plain" onchange="pgSmartRead(this.files[0])">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px;"><button type="button" class="tag-btn ghost" style="padding:4px 10px;font-size:12px;" onclick="pgLibBack()">&larr; All books of ${esc(PG.cls)}</button><b>${esc(PG.subject)}</b></div>
+    ${PG.src.length
+      ? `<div class="msg-ok">&#10003; This book is already saved (${PG.src.length} chapters) &mdash; no need to upload it again.</div>
+         <details style="margin:8px 0;"><summary style="cursor:pointer;font-size:13px;color:var(--navy-900);">Add or replace a PDF</summary>
+           <div style="margin-top:8px;"><input type="file" accept=".pdf,.txt,application/pdf,text/plain" onchange="pgSmartRead(this.files[0])"> <button type="button" class="tag-btn danger" style="padding:4px 10px;font-size:12px;margin-left:8px;" onclick="pgSrcClear()">Remove whole book</button></div></details>`
+      : `<h4 style="margin:0 0 6px;">Step 1 &mdash; Upload the book (PDF) &mdash; only once</h4>
+         <p class="note-inline" style="margin:0 0 8px;">Read inside your browser, then saved privately (admin only), chapter-wise.</p>
+         <input type="file" accept=".pdf,.txt,application/pdf,text/plain" onchange="pgSmartRead(this.files[0])">`}
     <div id="pgSmStatus" style="margin:10px 0;"></div>
 
     <h4 style="margin:18px 0 6px;">Step 2 &mdash; Choose the chapter(s)</h4>
@@ -5145,10 +5143,14 @@ async function pgSmartRead(file){
   }catch(e){ console.error(e); st.innerHTML = `<div class="msg-err">${esc(e.message||'Could not read the file')}</div>`; }
 }
 async function pgSrcDelete(i){
-  if(!pgOK() || !PG.src[i] || !confirm('Remove this chapter text from the saved book?')) return;
-  delete PG.sm.chaps[PG.src[i].name];
+  const c = PG.src[i];
+  if(!pgOK() || !c || !confirm('Remove this chapter from the saved book?')) return;
+  delete PG.sm.chaps[c.name];
   PG.src.splice(i,1);
-  try{ await fsDb.collection(PG_COLLECTION).doc(pgSrcKey()).set({ chapters: PG.src }); }catch(e){ console.error(e); }
+  try{
+    if(c.id) await fsDb.collection(PG_COLLECTION).doc(c.id).delete();
+    await fsDb.collection(PG_COLLECTION).doc(pgSrcKey()).set({ chapters: PG.src });
+  }catch(e){ console.error(e); }
   renderPaperGenerator();
 }
 async function pgSmartMake(){
@@ -5160,7 +5162,10 @@ async function pgSmartMake(){
   const types = PG_TYPES.filter(t=>S.use[t] && ((S.ex[t]||0)+(S.co[t]||0))>0);
   if(!types.length){ st.innerHTML = '<div class="msg-err">Step 3: tick at least one question type and give a number above 0.</div>'; return; }
   const per = Math.floor(70000/chosen.length);
-  const book = chosen.map(c=>`=== CHAPTER: ${c.name} ===\n${c.text.slice(0,per)}`).join('\n\n');
+  st.innerHTML = '<p class="note-inline">Loading the book text&hellip;</p>';
+  let texts;
+  try{ texts = await Promise.all(chosen.map(pgSrcText)); }catch(e){ console.error(e); st.innerHTML = '<div class="msg-err">Could not load the book text. Check your internet and the Firestore rules.</div>'; return; }
+  const book = chosen.map((c,i)=>`=== CHAPTER: ${c.name} ===\n${texts[i].slice(0,per)}`).join('\n\n');
   S.busy = true;
   const made = {}, fails = [];
   for(let k=0;k<types.length;k++){
@@ -5197,8 +5202,11 @@ async function pgAiNew(type, idx){
   const cur = PG.paper.sections[type][idx];
   const c = PG.src.find(x=>x.name===cur.chapter);
   const chosen = PG.src.filter(x=>PG.sm.chaps[x.name]);
-  const book = c ? `=== CHAPTER: ${c.name} ===\n${c.text.slice(0,60000)}`
-                 : chosen.map(x=>`=== CHAPTER: ${x.name} ===\n${x.text.slice(0,30000)}`).join('\n\n');
+  let book = '';
+  try{
+    if(c) book = `=== CHAPTER: ${c.name} ===\n${(await pgSrcText(c)).slice(0,60000)}`;
+    else { const tx = await Promise.all(chosen.map(pgSrcText)); book = chosen.map((x,i)=>`=== CHAPTER: ${x.name} ===\n${tx[i].slice(0,30000)}`).join('\n\n'); }
+  }catch(e){ console.error(e); }
   if(!book){ alert('The book text for this chapter is not saved. Upload the PDF in "Smart Paper" first.'); pgRenderPaper(); return; }
   const avoid = PG_TYPES.flatMap(t=>(PG.paper.sections[t]||[]).map(q=>q.text));
   const extra = 'Do NOT repeat or closely resemble any of these existing questions:\n' + avoid.slice(0,40).map(x=>'- '+pgShort(x,120)).join('\n');
@@ -5222,6 +5230,174 @@ function pgQBody(q){
   }
   if(q.type==='TF') return `<div dir="auto" style="white-space:pre-line;">${esc(q.text)} <b style="white-space:nowrap;">( &nbsp;&nbsp;&nbsp; )</b></div>`;
   return `<div dir="auto" style="white-space:pre-line;">${esc(q.text)}</div>`;
+}
+
+
+/* ---------------- BOOK LIBRARY: upload each book once, per class + subject ---------------- */
+PG.txt = {}; PG.lib = {}; PG.libSubs = [];
+function pgHash(str){ let h = 5381; for(let i=0;i<str.length;i++) h = ((h<<5)+h+str.charCodeAt(i))|0; return (h>>>0).toString(36); }
+function pgSrcKeyFor(c, s){ return 'src__' + (c+'__'+s).replace(/[\/\s]+/g,'_'); }
+function pgChLen(c){ return c.len || (c.text||'').length; }
+async function pgSrcText(c){
+  if(!c) return '';
+  if(typeof c.text === 'string') return c.text;              // older format: text stored inline
+  if(PG.txt[c.id] !== undefined) return PG.txt[c.id];
+  const d = await fsDb.collection(PG_COLLECTION).doc(c.id).get();
+  PG.txt[c.id] = d.exists ? (d.data().text || '') : '';
+  return PG.txt[c.id];
+}
+function pgLibraryHTML(){
+  const subs = DB.classSubjects[PG.cls] || [];
+  PG.libSubs = subs;
+  if(!subs.length) return '<div class="empty">No subjects are set for this class yet.</div>';
+  return `
+    <p class="note-inline" style="margin:0 0 10px;">Books of <b>${esc(PG.cls)}</b>. Upload each book's PDF <b>once</b> &mdash; it stays saved. After that you only pick the subject and make papers.</p>
+    <div id="pgSmStatus" style="margin-bottom:8px;"></div>
+    <div style="overflow-x:auto;"><table>
+      <tr><th>Subject / Book</th><th>Status</th><th></th></tr>
+      ${subs.map((s,i)=>`<tr><td>${esc(s)}</td><td id="pgLib_${i}">checking&hellip;</td>
+        <td style="white-space:nowrap;"><button type="button" class="tag-btn" style="padding:4px 10px;font-size:12px;" onclick="pgLibOpen(${i})">Make paper</button>
+        <label class="tag-btn ghost" style="padding:4px 10px;font-size:12px;cursor:pointer;display:inline-block;">Upload / add PDF<input type="file" accept=".pdf,.txt,application/pdf,text/plain" style="display:none;" onchange="pgLibUpload(${i},this.files[0])"></label></td></tr>`).join('')}
+    </table></div>`;
+}
+async function pgLoadLibrary(){
+  if(!pgOK() || !PG.cls) return;
+  PG.lib = {};
+  const subs = PG.libSubs || [], cls = PG.cls;
+  await Promise.all(subs.map(async (s,i)=>{
+    let n = 0;
+    try{ const d = await fsDb.collection(PG_COLLECTION).doc(pgSrcKeyFor(cls,s)).get(); n = d.exists ? (d.data().chapters||[]).length : 0; }catch(e){ n = 0; }
+    PG.lib[s] = n;
+    const el = document.getElementById('pgLib_'+i);
+    if(el && PG.cls===cls) el.innerHTML = n ? '&#10003; '+n+' chapter(s) saved' : 'not uploaded';
+  }));
+}
+async function pgLibOpen(i){
+  const s = (PG.libSubs||[])[i]; if(!s) return;
+  const sel = document.getElementById('pgSub'); if(sel) sel.value = s;
+  await pgSetScope();
+}
+async function pgLibUpload(i, file){
+  if(!file || !pgOK()) return;
+  const s = (PG.libSubs||[])[i]; if(!s) return;
+  PG.subject = s; PG.sel = {}; PG.imp = []; PG.editId = '';
+  await pgLoadBank();            // loads the books already saved for this subject, so new chapters are added to them
+  await pgSmartRead(file);       // reads the PDF, saves it, then shows this subject
+}
+async function pgLibBack(){
+  PG.subject = ''; PG.src = []; PG.bank = []; PG.sm.chaps = {};
+  renderPaperGenerator();
+}
+async function pgSrcClear(){
+  if(!pgOK() || !confirm('Remove the whole saved book for '+PG.subject+'? (Questions already made stay in the bank.)')) return;
+  try{
+    const ids = PG.src.map(c=>c.id).filter(Boolean);
+    for(let i=0;i<ids.length;i+=400){ const b = fsDb.batch(); ids.slice(i,i+400).forEach(id=>b.delete(fsDb.collection(PG_COLLECTION).doc(id))); await b.commit(); }
+    await fsDb.collection(PG_COLLECTION).doc(pgSrcKey()).delete();
+  }catch(e){ console.error(e); }
+  PG.src = []; PG.sm.chaps = {};
+  renderPaperGenerator();
+}
+
+
+/* ---------------- GENERATE TEST (no AI needed): Exercise / Past Paper / Additional -> Units -> Types ---------------- */
+PG.tab = 'auto';
+PG.gt = {
+  src:{ 'Exercise':true, 'Past Paper':true, 'Additional':true, 'Conceptual':true },
+  units:{}, untagged:true, avoid:true,
+  order:['MCQ','Short','Long'],
+  n:{ MCQ:5, Fill:5, TF:5, Match:1, Short:5, Long:3 },
+  marks:{ ...PG_DEFAULT_MARKS }
+};
+function pgGtPool(t){
+  const G = PG.gt, units = Object.keys(G.units).filter(k=>G.units[k]);
+  return PG.bank.filter(q=>q.type===t && G.src[q.source] && (!units.length || units.includes(q.chapter) || (G.untagged && !q.chapter)));
+}
+function pgAutoHTML(){
+  const G = PG.gt;
+  if(!PG.bank.length) return `<div class="empty">The question bank for <b>${esc(PG.subject)}</b> is empty.<br>Open <b>Import PDF</b>, choose the source (Exercise / Past Paper / Additional) and upload the PDF <b>once</b> &mdash; the questions stay saved.</div>
+    <div style="margin-top:10px;"><button type="button" class="btn-gold" onclick="pgTab('import')">Go to Import PDF</button></div>`;
+  const cnt = f=>PG.bank.filter(f).length;
+  const chs = pgChapters();
+  const picked = Object.keys(G.units).filter(k=>G.units[k]).length;
+  const box = 'display:flex;gap:6px;align-items:center;font-weight:400;padding:3px 0;';
+  return `
+    <div style="background:#fff7c2;border:1px solid #e6d96b;border-radius:6px;padding:8px 12px;margin-bottom:12px;">
+      <b>Questions Type:</b>
+      ${PG_SOURCES.map(s=>`<label style="display:inline-flex;gap:4px;align-items:center;margin:0 10px 0 8px;font-weight:400;"><input type="checkbox" style="width:auto;" ${G.src[s]?'checked':''} onchange="PG.gt.src['${s}']=this.checked;pgRenderBody()"> ${esc(s)} <small>(${cnt(q=>q.source===s)})</small></label>`).join('')}
+    </div>
+    <h4 style="margin:0 0 6px;">Select Unit(s)</h4>
+    <div style="max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px 10px;background:#fff;">
+      ${chs.length ? `<label style="${box}"><input type="checkbox" style="width:auto;" ${picked===0?'checked':''} onchange="if(this.checked){PG.gt.units={};}pgRenderBody()"> <b>All units</b></label>` +
+        chs.map((c,i)=>`<label style="${box}"><input type="checkbox" style="width:auto;" ${G.units[c]?'checked':''} onchange="PG.gt.units[pgChapters()[${i}]]=this.checked;pgRenderBody()"> <span dir="auto">${esc(c)}</span> <small style="color:var(--muted);">(${cnt(q=>q.chapter===c)})</small></label>`).join('')
+        : '<small>No units are tagged in this bank &mdash; all questions will be used.</small>'}
+    </div>
+    ${picked ? `<label style="${box}margin-top:4px;"><input type="checkbox" style="width:auto;" ${G.untagged?'checked':''} onchange="PG.gt.untagged=this.checked;pgRenderBody()"> Also include questions that have no unit (for example past papers)</label>` : ''}
+    <h4 style="margin:16px 0 6px;">Select Test Type</h4>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+      ${[['Only MCQs',['MCQ']],['Only Short',['Short']],['Only Long',['Long']],['Short + Long',['Short','Long']],['Long + Short',['Long','Short']],['MCQs + Short',['MCQ','Short']],['MCQs + Long',['MCQ','Long']],['MCQs + Short + Long',['MCQ','Short','Long']],['All types',PG_TYPES.slice()]]
+        .map(x=>`<button type="button" class="tag-btn ${JSON.stringify(G.order)===JSON.stringify(x[1])?'':'ghost'}" onclick='pgGtSetOrder(${JSON.stringify(x[1])})'>${x[0]}</button>`).join('')}
+    </div>
+    <p class="note-inline" style="margin:0 0 6px;">Or pick your own &mdash; the order you click is the order of the sections in the paper:</p>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+      ${PG_TYPES.map(t=>{ const i = G.order.indexOf(t); return `<button type="button" class="tag-btn ${i>=0?'':'ghost'}" onclick="pgGtToggle('${t}')">${i>=0?(i+1)+' &middot; ':''}${esc(PG_TYPE_LABEL[t])}</button>`; }).join('')}
+    </div>
+    ${G.order.length ? `<div style="overflow-x:auto;"><table>
+      <tr><th>Type</th><th>How many</th><th>Marks each</th><th>Available</th></tr>
+      ${G.order.map(t=>{ const av = pgGtPool(t).length; return `<tr><td>${esc(PG_TYPE_LABEL[t])}</td>
+        <td><input type="number" min="0" max="60" value="${G.n[t]}" style="width:70px;padding:6px;border:1px solid var(--line);border-radius:6px;" oninput="PG.gt.n['${t}']=parseFloat(this.value)||0"></td>
+        <td><input type="number" min="0.5" step="0.5" value="${G.marks[t]}" style="width:70px;padding:6px;border:1px solid var(--line);border-radius:6px;" oninput="PG.gt.marks['${t}']=parseFloat(this.value)||1"></td>
+        <td${av? '' : ' style="color:#b00020;"'}>${av}</td></tr>`; }).join('')}
+    </table></div>` : '<p class="note-inline">Choose at least one test type.</p>'}
+    <label style="${box}margin:10px 0;"><input type="checkbox" style="width:auto;" ${G.avoid?'checked':''} onchange="PG.gt.avoid=this.checked"> Prefer questions not used in earlier saved papers</label>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;">
+      <button type="button" class="btn-gold" onclick="pgGenerateAuto()">Generate</button>
+      ${PG.paper ? '<button type="button" class="tag-btn" onclick="pgGenerateAuto()">&#8635; Generate again</button>' : ''}
+    </div>
+    <p class="note-inline" style="margin-top:8px;">The test opens below. You can Replace any question, edit it, then Print.</p>`;
+}
+function pgGenerateAuto(){
+  if(!pgOK()) return;
+  const G = PG.gt, sec = {}, short = [];
+  PG_TYPES.forEach(t=>{
+    sec[t] = [];
+    if(!G.order.includes(t)) return;
+    const n = Math.round(G.n[t]||0); if(!n) return;
+    const pool = pgGtPool(t);
+    const picked = G.avoid ? pgPickLeastUsed(pool, n) : pgShuffle(pool).slice(0, n);
+    if(picked.length < n) short.push(`${PG_TYPE_LABEL[t]}: wanted ${n}, only ${picked.length} available`);
+    picked.forEach(q=>sec[t].push({ ...q, marks: G.marks[t] || PG_DEFAULT_MARKS[t] }));
+  });
+  if(!Object.values(sec).some(a=>a.length)){
+    pgSet('<div class="msg-err">No questions matched. Check the Questions Type ticks, the units and the numbers.</div>'); renderPaperGenerator(); return;
+  }
+  PG.paper = pgNewPaper(sec, G.order.slice());
+  pgSet(`<div class="msg-ok">Test generated &mdash; scroll down to review, replace and print.</div>` + (short.length ? `<div class="msg-err">Not enough questions: ${short.map(esc).join('; ')}.</div>` : ''));
+  renderPaperGenerator();
+  setTimeout(()=>{ const w = document.getElementById('pgPaperWrap'); if(w) w.scrollIntoView({ behavior:'smooth' }); }, 50);
+}
+
+
+/* ---------------- test type presets + section order ---------------- */
+function pgOrder(p){
+  const o = (p.order || []).filter(t=>PG_TYPES.includes(t));
+  return o.concat(PG_TYPES.filter(t=>!o.includes(t)));
+}
+function pgGtSetOrder(order){ PG.gt.order = order.slice(); pgRenderBody(); }
+function pgGtToggle(t){
+  const o = PG.gt.order, i = o.indexOf(t);
+  if(i>=0) o.splice(i,1); else o.push(t);
+  pgRenderBody();
+}
+function pgMoveSec(t, dir){
+  const p = PG.paper; if(!p) return;
+  const full = pgOrder(p), present = full.filter(x=>(p.sections[x]||[]).length);
+  const i = present.indexOf(t), j = i + dir;
+  if(i<0 || j<0 || j>=present.length) return;
+  const a = full.indexOf(present[i]), b = full.indexOf(present[j]);
+  [full[a], full[b]] = [full[b], full[a]];
+  p.order = full;
+  pgRenderPaper();
 }
 
 </script>
