@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Quaid High School KSK</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;900&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;900&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&family=Noto+Nastaliq+Urdu:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -4119,6 +4119,60 @@ function pgPickLeastUsed(pool, n){
 }
 function pgSet(msgHTML){ PG.msg = msgHTML || ''; }
 
+/* ---- language helpers: 9th/10th = dual (English + Urdu); PG to 8th = one language ---- */
+const PG_SENIOR_TYPES = ['MCQ','Short','Long'];
+const PG_UR_FONT = "'Noto Nastaliq Urdu','Jameel Noori Nastaleeq','Urdu Typesetting','Noto Naskh Arabic',serif";
+const PG_LABEL_UR = { MCQ:'کثیر الانتخابی سوالات', Fill:'خالی جگہ پُر کریں', TF:'صحیح / غلط (✓ یا ✗)', Match:'کالم ملائیں', Short:'مختصر سوالات', Long:'تفصیلی سوالات' };
+const PG_INSTR_UR = { MCQ:'درست جواب کا انتخاب کریں۔', Fill:'خالی جگہیں پُر کریں۔', TF:'صحیح بیان کے سامنے ✓ اور غلط کے سامنے ✗ لگائیں۔', Match:'کالم A کو کالم B سے ملائیں۔', Short:'درج ذیل مختصر سوالات کے جواب دیں۔', Long:'درج ذیل سوالات کے تفصیلی جواب دیں۔' };
+function pgSenior(c){ return c==='Nine' || c==='Ten'; }
+function pgTypes(){ return pgSenior(PG.cls) ? PG_SENIOR_TYPES : PG_TYPES; }
+function pgTypesOK(a){ return a.every(t=>pgTypes().includes(t)); }
+function pgLangOf(q){ if(q.lang==='en' || q.lang==='ur') return q.lang; if(q.lang==='both') return 'en'; return /[\u0600-\u06FF]/.test(q.text||'') ? 'ur' : 'en'; }
+function pgPaperLang(p){ return p.lang || (pgSenior(p.cls) ? 'both' : 'en'); }
+function pgSameLang(q, p){ const m = pgPaperLang(p); return m==='both' || pgLangOf(q)===m; }
+function pgLangOK(q){ const G = PG.gt; return pgSenior(PG.cls) ? (!G.bothOnly || !!q.textUr) : pgLangOf(q)===G.lang; }
+function pgTfSign(a){ a = String(a||'').trim(); return /^(t|true|tick|✓)/i.test(a) ? '✓' : (/^(f|false|cross|✗|x)/i.test(a) ? '✗' : ''); }
+function pgLangBoxHTML(){
+  const G = PG.gt, bx = 'border:1px solid var(--line);border-radius:6px;padding:8px 12px;margin-bottom:12px;background:#fff;';
+  if(pgSenior(PG.cls)){
+    const miss = PG.bank.filter(q=>!q.textUr).length;
+    return `<div style="${bx}"><b>Dual language:</b> every question prints in English and Urdu side by side (MCQs, Short and Long only).${miss ? `<div style="color:#b00020;font-size:13px;margin-top:4px;">${miss} question(s) have no Urdu version yet and will print in English only. Add the Urdu in Add Questions or Question Bank.</div>` : ''}
+      <label style="display:flex;gap:6px;align-items:center;font-weight:400;margin-top:4px;"><input type="checkbox" style="width:auto;" ${G.bothOnly?'checked':''} onchange="PG.gt.bothOnly=this.checked;pgRenderBody()"> Use only questions that have both Urdu and English</label></div>`;
+  }
+  return `<div style="${bx}"><b>Paper Language:</b> ${[['en','English'],['ur','اردو']].map(x=>`<button type="button" class="tag-btn ${G.lang===x[0]?'':'ghost'}" style="margin:0 6px;" onclick="PG.gt.lang='${x[0]}';pgRenderBody()">${x[1]} (${PG.bank.filter(q=>pgLangOf(q)===x[0]).length})</button>`).join('')}<small style="color:var(--muted);">only questions of the chosen language are used</small></div>`;
+}
+function pgAddLangBox(){
+  if(pgSenior(PG.cls)) return '<p class="note-inline" style="margin:8px 0;">Class 9/10: write each question in English and also in Urdu (the Urdu boxes are below).</p>';
+  return `<div style="margin:6px 0 10px;"><b>Language of these questions:</b> ${[['en','English'],['ur','اردو']].map(x=>`<button type="button" class="tag-btn ${PG.add.lang===x[0]?'':'ghost'}" style="margin:0 6px;" onclick="PG.add.lang='${x[0]}';pgRenderBody()">${x[1]}</button>`).join('')}</div>`;
+}
+function pgTfPick(t, i, q){
+  const sg = pgTfSign(q.answer);
+  return `<div style="margin-top:6px;font-size:13px;">Answer: ${[['True','✓ Tick'],['False','✗ Cross'],['','Not set']].map(x=>`<button type="button" class="tag-btn ${(sg==='✓'&&x[0]==='True')||(sg==='✗'&&x[0]==='False')||(!sg&&!x[0])?'':'ghost'}" style="padding:2px 10px;font-size:12px;margin-right:4px;" onclick="PG.paper.sections['${t}'][${i}].answer='${x[0]}';pgRenderPaper()">${x[1]}</button>`).join('')}</div>`;
+}
+function pgUrBox(t, i, q, p){
+  return pgSenior(p.cls) ? `<textarea rows="2" dir="rtl" placeholder="اردو ورژن (Urdu)" style="width:100%;margin-top:6px;padding:8px;border:1px solid var(--line);border-radius:6px;font-family:${PG_UR_FONT};font-size:14px;" oninput="PG.paper.sections['${t}'][${i}].textUr=this.value">${esc(q.textUr||'')}</textarea>` : '';
+}
+function pgTfAddHTML(inp){
+  return `<p class="note-inline" style="margin:0 0 6px;">Write each statement and choose its answer: &#10003; (true) or &#10007; (false). In the paper every statement gets an empty box at the end of the line for the child; the answer only goes into the Answer Key.</p>
+    ${PG.add.tf.map((r,i)=>`<div style="display:flex;gap:8px;margin-bottom:6px;"><input dir="auto" style="${inp}flex:1;" value="${esc(r.t)}" oninput="PG.add.tf[${i}].t=this.value"><select style="padding:8px;border:1px solid var(--line);border-radius:6px;" onchange="PG.add.tf[${i}].a=this.value"><option value="">&mdash; answer &mdash;</option><option value="True" ${r.a==='True'?'selected':''}>✓ Tick</option><option value="False" ${r.a==='False'?'selected':''}>✗ Cross</option></select></div>`).join('')}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"><button type="button" class="tag-btn" onclick="PG.add.tf.push({t:'',a:''});pgRenderBody()">+ Add a row</button><button type="button" class="btn-gold" onclick="pgAddTf()">Save these statements</button></div>`;
+}
+async function pgAddTf(){
+  const items = PG.add.tf.filter(r=>r.t.trim()).map(r=>({ type:'TF', text:r.t, answer:r.a }));
+  if(!items.length){ PG.add.note = '<div class="msg-err">Write at least one statement.</div>'; pgRenderBody(); return; }
+  const n = await pgAddStore(items);
+  if(n) PG.add.tf = [1,2,3,4,5].map(()=>({t:'',a:''}));
+  pgRenderBody();
+}
+function pgBankExtraHTML(e){
+  if(pgSenior(PG.cls)) return `<div class="field"><label>Urdu version (اردو)</label><textarea id="pgqTextUr" rows="3" dir="rtl" style="font-family:${PG_UR_FONT};">${e?esc(e.textUr||''):''}</textarea></div>`;
+  return `<div class="field"><label>Language</label><select id="pgqLang"><option value="en" ${(!e||pgLangOf(e)==='en')?'selected':''}>English</option><option value="ur" ${e&&pgLangOf(e)==='ur'?'selected':''}>اردو (Urdu)</option></select></div>`;
+}
+function pgBankExtraRead(){
+  if(pgSenior(PG.cls)){ const u = document.getElementById('pgqTextUr').value.trim(); return { textUr:u, lang:u?'both':'en' }; }
+  return { lang: document.getElementById('pgqLang').value };
+}
+
 async function pgLoadBank(){
   PG.bank = []; PG.src = [];
   if(!pgOK() || !PG.cls || !PG.subject) return;
@@ -4213,6 +4267,7 @@ function pgBankHTML(){
     <div class="admin-block" style="background:#fff;">
       <h3 style="font-size:14px;">${e?'Edit Question':'Add a Question'}</h3>
       <div class="field"><label>Question (for MCQ put each option on a new line)</label><textarea id="pgqText" rows="3" dir="auto">${e?esc(e.text):''}</textarea></div>
+      ${pgBankExtraHTML(e)}
       <div class="field"><label>Answer / Solution (optional)</label><textarea id="pgqAnswer" rows="3" dir="auto">${e?esc(e.answer||''):''}</textarea></div>
       <div class="row-2">
         <div class="field"><label>Type</label><select id="pgqType">${pgOpts(PG_TYPES, e?e.type:'Short')}</select></div>
@@ -4247,7 +4302,7 @@ async function pgSaveQuestion(){
   const rec = { text, type, source: document.getElementById('pgqSource').value,
     chapter: document.getElementById('pgqChapter').value.trim(),
     answer: document.getElementById('pgqAnswer').value.trim(),
-    marks: parseFloat(document.getElementById('pgqMarks').value) || PG_DEFAULT_MARKS[type] };
+    marks: parseFloat(document.getElementById('pgqMarks').value) || PG_DEFAULT_MARKS[type], ...pgBankExtraRead() };
   if(PG.editId){
     const i = PG.bank.findIndex(q=>q.id===PG.editId);
     if(i>=0) PG.bank[i] = { ...PG.bank[i], ...rec };
@@ -4485,8 +4540,9 @@ function pgManualHTML(){
         <span dir="auto" style="flex:1;white-space:pre-line;font-size:14px;">${esc(pgShort(q.text,260))}<br><small style="color:var(--muted);">${esc(q.type)} &middot; ${esc(q.source)} &middot; ${esc(q.chapter||'no chapter')} &middot; ${esc(q.marks)} marks${q.used?` &middot; used ${q.used}×`:''}</small></span></label>`).join('') || '<div class="empty" style="padding:14px;">No questions match this filter.</div>'}
     </div>`;
 }
-function pgNewPaper(sections, order){
-  return { id: uid(), cls:PG.cls, subject:PG.subject, exam:'', date:new Date().toISOString().slice(0,10), time:'', sections, order: order || null };
+function pgNewPaper(sections, order, lang){
+  if(!lang) lang = pgSenior(PG.cls) ? 'both' : (PG_TYPES.flatMap(t=>sections[t]||[]).every(q=>pgLangOf(q)==='ur') ? 'ur' : 'en');
+  return { id: uid(), lang, cls:PG.cls, subject:PG.subject, exam:'', date:new Date().toISOString().slice(0,10), time:'', sections, order: order || null };
 }
 function pgBuildManual(){
   if(!pgOK()) return;
@@ -4520,7 +4576,7 @@ function pgRenderPaper(){
     ${pgOrder(p).map(t=>{
       const qs = p.sections[t] || [];
       if(!qs.length) return '';
-      const pool = PG.bank.filter(q=>q.type===t && !inPaper.has(q.id));
+      const pool = PG.bank.filter(q=>q.type===t && !inPaper.has(q.id) && pgSameLang(q,p));
       return `<div style="margin-top:14px;"><div style="font-weight:700;color:var(--navy-900);margin-bottom:6px;display:flex;gap:6px;align-items:center;">${esc(PG_TYPE_LABEL[t])} <button type="button" class="tag-btn ghost" style="padding:1px 8px;font-size:12px;" title="Move section up" onclick="pgMoveSec('${t}',-1)">&uarr;</button><button type="button" class="tag-btn ghost" style="padding:1px 8px;font-size:12px;" title="Move section down" onclick="pgMoveSec('${t}',1)">&darr;</button></div>
         ${qs.map((q,i)=>{ n++; return `
         <div style="border:1px solid var(--line);border-radius:6px;padding:10px;margin-bottom:8px;background:#fff;">
@@ -4529,7 +4585,7 @@ function pgRenderPaper(){
             <textarea rows="2" dir="auto" style="flex:1;padding:8px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:14px;" oninput="PG.paper.sections['${t}'][${i}].text=this.value">${esc(q.text)}</textarea>
             <input type="number" min="0" step="0.5" value="${esc(q.marks)}" style="width:64px;padding:6px;border:1px solid var(--line);border-radius:6px;" title="Marks" onchange="PG.paper.sections['${t}'][${i}].marks=parseFloat(this.value)||0;pgRenderPaper()">
           </div>
-          <details style="margin-top:6px;"><summary style="cursor:pointer;font-size:12px;color:var(--navy-900);">Answer / Solution ${q.answer?'&#10003;':'(none)'}</summary><textarea rows="3" dir="auto" style="width:100%;margin-top:4px;padding:8px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:13px;" oninput="PG.paper.sections['${t}'][${i}].answer=this.value">${esc(q.answer||'')}</textarea></details>
+          ${pgUrBox(t,i,q,p)}${t==='TF'?pgTfPick(t,i,q):`<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:12px;color:var(--navy-900);">Answer / Solution ${q.answer?'&#10003;':'(none)'}</summary><textarea rows="3" dir="auto" style="width:100%;margin-top:4px;padding:8px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:13px;" oninput="PG.paper.sections['${t}'][${i}].answer=this.value">${esc(q.answer||'')}</textarea></details>`}
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center;">
             <small style="color:var(--muted);">${esc(q.source)} &middot; ${esc(q.chapter||'no chapter')}</small>
             <button type="button" class="tag-btn" style="padding:4px 10px;font-size:12px;" onclick="pgReplace('${t}',${i})">&#8635; Replace</button>
@@ -4552,7 +4608,7 @@ function pgReplace(type, idx){
   if(!pgOK()) return;
   const p = PG.paper, cur = p.sections[type][idx];
   const inPaper = new Set(PG_TYPES.flatMap(t=>(p.sections[t]||[]).map(q=>q.id)));
-  const pool = PG.bank.filter(q=>q.type===type && !inPaper.has(q.id));
+  const pool = PG.bank.filter(q=>q.type===type && !inPaper.has(q.id) && pgSameLang(q,p));
   if(!pool.length){ alert('No other '+type+' questions are left in the bank to replace this one.'); return; }
   // prefer same source + same chapter, then same source, then anything
   const tier = [pool.filter(q=>q.source===cur.source && q.chapter===cur.chapter), pool.filter(q=>q.source===cur.source), pool].find(a=>a.length);
@@ -4569,21 +4625,24 @@ function pgReplaceWith(type, idx, id){
 }
 function pgRemoveQ(type, idx){ PG.paper.sections[type].splice(idx,1); pgRenderPaper(); }
 function pgPaperHTML(p){
+  const m = pgPaperLang(p), ur = m==='ur', both = m==='both';
+  const F = 'font-family:'+PG_UR_FONT+';line-height:2;';
+  const W = ur ? { cls:'جماعت', sub:'مضمون', tm:'کل نمبر', dt:'تاریخ', tt:'وقت', sec:'حصہ', mk:'نمبر', q:'سوال ' } : { cls:'Class', sub:'Subject', tm:'Total Marks', dt:'Date', tt:'Time', sec:'Section', mk:'Marks', q:'Q' };
   let n = 0;
   const sections = pgOrder(p).filter(t=>(p.sections[t]||[]).length).map((t,si)=>{
     const qs = p.sections[t];
     const sum = qs.reduce((a,q)=>a+(+q.marks||0),0);
     return `<div style="margin-top:16px;">
-      <div style="font-weight:700;border-bottom:1px solid #000;padding-bottom:3px;margin-bottom:8px;display:flex;justify-content:space-between;"><span>Section ${String.fromCharCode(65+si)} &mdash; ${esc(PG_TYPE_LABEL[t])}</span><span>Marks: ${sum}</span></div>
-      <div style="font-style:italic;font-size:12.5px;margin-bottom:6px;">${esc(PG_TYPE_INSTR[t]||'')}</div>
-      ${qs.map(q=>{ n++; return `<div style="display:flex;gap:8px;margin-bottom:9px;page-break-inside:avoid;"><b>Q${n}.</b><div style="flex:1;">${pgQBody(q)}</div><b>[${esc(q.marks)}]</b></div>`; }).join('')}
+      <div style="font-weight:700;border-bottom:1px solid #000;padding-bottom:3px;margin-bottom:8px;display:flex;justify-content:space-between;gap:10px;"><span>${W.sec} ${String.fromCharCode(65+si)} &mdash; ${esc(ur?PG_LABEL_UR[t]:PG_TYPE_LABEL[t])}</span>${both?`<span dir="rtl" style="${F}">${esc(PG_LABEL_UR[t])}</span>`:''}<span>${W.mk}: ${sum}</span></div>
+      <div style="font-style:italic;font-size:12.5px;margin-bottom:6px;display:flex;justify-content:space-between;gap:10px;"><span>${esc(ur?PG_INSTR_UR[t]:(PG_TYPE_INSTR[t]||''))}</span>${both?`<span dir="rtl" style="${F}">${esc(PG_INSTR_UR[t]||'')}</span>`:''}</div>
+      ${qs.map(q=>{ n++; return `<div style="display:flex;gap:8px;margin-bottom:9px;page-break-inside:avoid;"><b>${W.q}${n}.</b><div style="flex:1;">${pgQBody(q,m)}</div><b>[${esc(q.marks)}]</b></div>`; }).join('')}
     </div>`;
   }).join('');
-  return `<div style="font-family:'Times New Roman',serif;color:#000;font-size:14px;line-height:1.5;">
+  return `<div ${ur?'dir="rtl"':''} style="font-family:${ur?PG_UR_FONT+',':''}'Times New Roman',serif;color:#000;font-size:14px;line-height:${ur?2.1:1.5};">
     ${schoolBrandHTML(p.exam || 'Examination Paper')}
     <table style="width:100%;border-collapse:collapse;margin-bottom:6px;font-size:13px;">
-      <tr><td><b>Class:</b> ${esc(p.cls)}</td><td><b>Subject:</b> ${esc(p.subject)}</td><td><b>Total Marks:</b> ${pgPaperTotal(p)}</td></tr>
-      <tr><td><b>Date:</b> ${p.date?esc(fmtDate(p.date)):''}</td><td><b>Time:</b> ${esc(p.time||'')}</td><td></td></tr>
+      <tr><td><b>${W.cls}:</b> ${esc(p.cls)}</td><td><b>${W.sub}:</b> ${esc(p.subject)}</td><td><b>${W.tm}:</b> ${pgPaperTotal(p)}</td></tr>
+      <tr><td><b>${W.dt}:</b> ${p.date?esc(fmtDate(p.date)):''}</td><td><b>${W.tt}:</b> ${esc(p.time||'')}</td><td></td></tr>
     </table>
     ${sections}
   </div>`;
@@ -4591,7 +4650,13 @@ function pgPaperHTML(p){
 function pgPrintKey(){
   if(!pgOK() || !PG.paper) return;
   const p = PG.paper; let n = 0;
-  const rows = pgOrder(p).flatMap(t=>p.sections[t]||[]).map(q=>{ n++; return `<div style="margin-bottom:10px;page-break-inside:avoid;"><b>Q${n}.</b> <span dir="auto" style="white-space:pre-line;">${esc(pgShort(q.text,160))}</span><div dir="auto" style="margin:3px 0 0 28px;white-space:pre-line;"><b>Ans:</b> ${q.answer?esc(q.answer):'<i>not provided</i>'}</div></div>`; }).join('');
+  const rows = pgOrder(p).flatMap(t=>p.sections[t]||[]).map(q=>{
+    n++;
+    let ans;
+    if(q.type==='TF'){ const sg = pgTfSign(q.answer); ans = sg ? `<b style="font-size:20px;">${sg}</b>` : '<i style="color:#b00020;">not set</i>'; }
+    else ans = q.answer ? esc(q.answer) : '<i>not provided</i>';
+    return `<div style="margin-bottom:10px;page-break-inside:avoid;"><b>Q${n}.</b> <span dir="auto" style="white-space:pre-line;">${esc(pgShort(q.text,160))}</span><div dir="auto" style="margin:3px 0 0 28px;white-space:pre-line;"><b>Ans:</b> ${ans}</div></div>`;
+  }).join('');
   printHTML(`<div style="font-family:'Times New Roman',serif;color:#000;font-size:14px;line-height:1.5;">${schoolBrandHTML('Answer Key — '+(p.exam||'Examination Paper'))}<p style="font-size:13px;"><b>Class:</b> ${esc(p.cls)} &nbsp; <b>Subject:</b> ${esc(p.subject)}</p>${rows}</div>`);
 }
 function pgPrint(){ if(!pgOK() || !PG.paper) return; printHTML(pgPaperHTML(PG.paper)); }
@@ -5285,15 +5350,20 @@ async function pgAiNew(type, idx){
   }catch(e){ console.error(e); alert(e.message||'Could not make a new question'); }
   pgRenderPaper();
 }
-function pgQBody(q){
+function pgQOne(q, text){
   if(q.type==='Match'){
-    const lines = String(q.text).split('\n').map(l=>l.trim()).filter(Boolean);
+    const lines = String(text).split('\n').map(l=>l.trim()).filter(Boolean);
     const rows = lines.filter(l=>l.indexOf('||')>-1).map(l=>l.split('||').map(x=>x.trim()));
     const head = lines.filter(l=>l.indexOf('||')<0).join(' ');
     if(rows.length) return `<div dir="auto">${esc(head)}</div><table style="width:100%;border-collapse:collapse;margin-top:4px;font-size:13px;" border="1" cellpadding="4"><tr><th style="width:50%;">Column A</th><th>Column B</th></tr>${rows.map(r=>`<tr><td dir="auto">${esc(r[0])}</td><td dir="auto">${esc(r[1]||'')}</td></tr>`).join('')}</table>`;
   }
-  if(q.type==='TF') return `<div dir="auto" style="white-space:pre-line;">${esc(q.text)} <b style="white-space:nowrap;">( &nbsp;&nbsp;&nbsp; )</b></div>`;
-  return `<div dir="auto" style="white-space:pre-line;">${esc(q.text)}</div>`;
+  return `<div dir="auto" style="white-space:pre-line;">${esc(text)}</div>`;
+}
+function pgQBody(q, mode){
+  let inner = pgQOne(q, q.text);
+  if(mode==='both' && q.textUr) inner = `<div style="display:flex;gap:16px;"><div style="flex:1;" dir="ltr">${inner}</div><div style="flex:1;text-align:right;font-family:${PG_UR_FONT};line-height:2;" dir="rtl">${pgQOne(q, q.textUr)}</div></div>`;
+  if(q.type==='TF') return `<div style="display:flex;gap:10px;align-items:center;"><div style="flex:1;">${inner}</div><span style="flex:none;width:24px;height:24px;border:1.5px solid #000;display:inline-block;"></span></div>`;
+  return inner;
 }
 
 
@@ -5375,10 +5445,10 @@ PG.gt = {
 };
 function pgGtPool(t){
   const G = PG.gt, units = Object.keys(G.units).filter(k=>G.units[k]);
-  return PG.bank.filter(q=>q.type===t && G.src[q.source] && (!units.length || units.includes(q.chapter) || (G.untagged && !q.chapter)));
+  return PG.bank.filter(q=>q.type===t && pgLangOK(q) && G.src[q.source] && (!units.length || units.includes(q.chapter) || (G.untagged && !q.chapter)));
 }
 function pgAutoHTML(){
-  const G = PG.gt;
+  const G = PG.gt; G.order = G.order.filter(t=>pgTypes().includes(t));
   if(!PG.bank.length) return `<div class="empty">The question bank for <b>${esc(PG.subject)}</b> is empty.<br>Add questions once (type them, or import a PDF) &mdash; they stay saved.</div>
     <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;"><button type="button" class="btn-gold" onclick="pgTab('add')">Add Questions</button><button type="button" class="tag-btn" onclick="pgTab('import')">Import PDF</button></div>`;
   const cnt = f=>PG.bank.filter(f).length;
@@ -5390,6 +5460,7 @@ function pgAutoHTML(){
       <b>Questions Type:</b>
       ${PG_SOURCES.map(s=>`<label style="display:inline-flex;gap:4px;align-items:center;margin:0 10px 0 8px;font-weight:400;"><input type="checkbox" style="width:auto;" ${G.src[s]?'checked':''} onchange="PG.gt.src['${s}']=this.checked;pgRenderBody()"> ${esc(s)} <small>(${cnt(q=>q.source===s)})</small></label>`).join('')}
     </div>
+    ${pgLangBoxHTML()}
     <h4 style="margin:0 0 6px;">Select Unit(s)</h4>
     <div style="max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px 10px;background:#fff;">
       ${chs.length ? `<label style="${box}"><input type="checkbox" style="width:auto;" ${picked===0?'checked':''} onchange="if(this.checked){PG.gt.units={};}pgRenderBody()"> <b>All units</b></label>` +
@@ -5400,11 +5471,11 @@ function pgAutoHTML(){
     <h4 style="margin:16px 0 6px;">Select Test Type</h4>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
       ${[['Only MCQs',['MCQ']],['Only Short',['Short']],['Only Long',['Long']],['Short + Long',['Short','Long']],['Long + Short',['Long','Short']],['MCQs + Short',['MCQ','Short']],['MCQs + Long',['MCQ','Long']],['MCQs + Short + Long',['MCQ','Short','Long']],['All types',PG_TYPES.slice()]]
-        .map(x=>`<button type="button" class="tag-btn ${JSON.stringify(G.order)===JSON.stringify(x[1])?'':'ghost'}" onclick='pgGtSetOrder(${JSON.stringify(x[1])})'>${x[0]}</button>`).join('')}
+        .filter(x=>pgTypesOK(x[1])).map(x=>`<button type="button" class="tag-btn ${JSON.stringify(G.order)===JSON.stringify(x[1])?'':'ghost'}" onclick='pgGtSetOrder(${JSON.stringify(x[1])})'>${x[0]}</button>`).join('')}
     </div>
     <p class="note-inline" style="margin:0 0 6px;">Or pick your own &mdash; the order you click is the order of the sections in the paper:</p>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
-      ${PG_TYPES.map(t=>{ const i = G.order.indexOf(t); return `<button type="button" class="tag-btn ${i>=0?'':'ghost'}" onclick="pgGtToggle('${t}')">${i>=0?(i+1)+' &middot; ':''}${esc(PG_TYPE_LABEL[t])}</button>`; }).join('')}
+      ${pgTypes().map(t=>{ const i = G.order.indexOf(t); return `<button type="button" class="tag-btn ${i>=0?'':'ghost'}" onclick="pgGtToggle('${t}')">${i>=0?(i+1)+' &middot; ':''}${esc(PG_TYPE_LABEL[t])}</button>`; }).join('')}
     </div>
     ${G.order.length ? `<div style="overflow-x:auto;"><table>
       <tr><th>Type</th><th>How many</th><th>Marks each</th><th>Available</th></tr>
@@ -5424,6 +5495,7 @@ function pgAutoHTML(){
 function pgGenerateAuto(){
   if(!pgOK()) return;
   const G = PG.gt, sec = {}, short = [];
+  G.order = G.order.filter(t=>pgTypes().includes(t));
   PG_TYPES.forEach(t=>{
     sec[t] = [];
     if(!G.order.includes(t)) return;
@@ -5436,7 +5508,7 @@ function pgGenerateAuto(){
   if(!Object.values(sec).some(a=>a.length)){
     pgSet('<div class="msg-err">No questions matched. Check the Questions Type ticks, the units and the numbers.</div>'); renderPaperGenerator(); return;
   }
-  PG.paper = pgNewPaper(sec, G.order.slice());
+  PG.paper = pgNewPaper(sec, G.order.slice(), pgSenior(PG.cls) ? 'both' : G.lang);
   pgSet(`<div class="msg-ok">Test generated &mdash; scroll down to review, replace and print.</div>` + (short.length ? `<div class="msg-err">Not enough questions: ${short.map(esc).join('; ')}.</div>` : ''));
   renderPaperGenerator();
   setTimeout(()=>{ const w = document.getElementById('pgPaperWrap'); if(w) w.scrollIntoView({ behavior:'smooth' }); }, 50);
@@ -5565,7 +5637,8 @@ PG.add = {
   bulk:{ Short:'', Long:'', TF:'', Fill:'' },
   match:{ instr:'Match the items in Column A with those in Column B.', L:['','','','',''], R:['','','','',''] }
 };
-PG.gt.spread = true;
+PG.gt.spread = true; PG.gt.lang = 'en'; PG.gt.bothOnly = false;
+PG.add.lang = 'en'; PG.add.mcq.qu = ''; PG.add.mcq.ou = ['','','','']; PG.add.bulkUr = { Short:'', Long:'' }; PG.add.tf = [1,2,3,4,5].map(()=>({t:'',a:''}));
 const PG_ADD_KINDS = [['MCQ','MCQs'],['Short','Short Questions'],['Long','Long Questions'],['TF','True / False (✓ ✗)'],['Fill','Fill in the Blanks'],['Match','Match Columns']];
 const PG_ADD_HELP = {
   Short:'Write one question on each line. Add as many lines as you like.',
@@ -5574,7 +5647,9 @@ const PG_ADD_HELP = {
   Fill:'Write one sentence on each line, with ____ where the blank is. To save the answer, add  |  the missing word  at the end of the line.'
 };
 function pgAddHTML(){
-  const A = PG.add, k = A.kind, chs = pgChapters();
+  const A = PG.add, chs = pgChapters(), sen = pgSenior(PG.cls);
+  if(sen && !PG_SENIOR_TYPES.includes(A.kind)) A.kind = 'MCQ';
+  const k = A.kind;
   const inp = 'width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:14px;';
   let body = '';
   if(k==='MCQ'){
@@ -5586,7 +5661,11 @@ function pgAddHTML(){
       <div class="field"><label>Correct option (optional, used for the answer key)</label>
         <select style="padding:8px;border:1px solid var(--line);border-radius:6px;" onchange="PG.add.mcq.ans=this.value">
           <option value="">&mdash; not set &mdash;</option>${[0,1,2,3].map(i=>`<option value="${i}" ${A.mcq.ans===String(i)?'selected':''}>(${'abcd'[i]})</option>`).join('')}</select></div>
+      ${sen?`<div class="field"><label>Urdu question (اردو)</label><textarea rows="2" dir="rtl" style="${inp}font-family:${PG_UR_FONT};" oninput="PG.add.mcq.qu=this.value">${esc(A.mcq.qu)}</textarea></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">${[0,1,2,3].map(i=>`<div><label style="font-size:13px;">Urdu option (${'abcd'[i]})</label><input dir="rtl" style="${inp}font-family:${PG_UR_FONT};" value="${esc(A.mcq.ou[i])}" oninput="PG.add.mcq.ou[${i}]=this.value"></div>`).join('')}</div>`:''}
       <button type="button" class="btn-gold" onclick="pgAddMcq()">Add this MCQ</button>`;
+  } else if(k==='TF'){
+    body = pgTfAddHTML(inp);
   } else if(k==='Match'){
     body = `
       <div class="field"><label>Instruction line</label><input dir="auto" style="${inp}" value="${esc(A.match.instr)}" oninput="PG.add.match.instr=this.value"></div>
@@ -5603,6 +5682,7 @@ function pgAddHTML(){
     body = `
       <p class="note-inline" style="margin:0 0 6px;">${PG_ADD_HELP[k]}</p>
       <textarea rows="8" dir="auto" style="${inp}" placeholder="One per line&hellip;" oninput="PG.add.bulk['${k}']=this.value">${esc(A.bulk[k])}</textarea>
+      ${sen?`<p class="note-inline" style="margin:10px 0 6px;">Urdu version: write the Urdu of each line on the same line number as the English above.</p><textarea rows="8" dir="rtl" style="${inp}font-family:${PG_UR_FONT};" oninput="PG.add.bulkUr['${k}']=this.value">${esc(PG.add.bulkUr[k]||'')}</textarea>`:''}
       <div style="margin-top:10px;"><button type="button" class="btn-gold" onclick="pgAddBulk('${k}')">Add all lines</button></div>`;
   }
   return `
@@ -5616,8 +5696,9 @@ function pgAddHTML(){
       </div>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 14px;">
-      ${PG_ADD_KINDS.map(x=>`<button type="button" class="tag-btn ${k===x[0]?'':'ghost'}" onclick="PG.add.kind='${x[0]}';PG.add.note='';pgRenderBody()">${x[1]}</button>`).join('')}
+      ${PG_ADD_KINDS.filter(x=>!sen||PG_SENIOR_TYPES.includes(x[0])).map(x=>`<button type="button" class="tag-btn ${k===x[0]?'':'ghost'}" onclick="PG.add.kind='${x[0]}';PG.add.note='';pgRenderBody()">${x[1]}</button>`).join('')}
     </div>
+    ${pgAddLangBox()}
     ${body}
     ${A.recent.length ? `<h4 style="margin:20px 0 6px;">Added just now</h4>
       <div style="border:1px solid var(--line);border-radius:6px;background:#fff;">${A.recent.map(r=>`<div style="display:flex;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line);align-items:flex-start;"><span dir="auto" style="flex:1;white-space:pre-line;font-size:13px;">${esc(pgShort(r.text,200))}</span><button type="button" class="tag-btn danger" style="padding:2px 8px;font-size:11px;" onclick="pgAddUndo('${r.id}')">Remove</button></div>`).join('')}</div>` : ''}`;
@@ -5630,7 +5711,8 @@ async function pgAddStore(items){
     const key = it.type+'|'+it.text.trim().toLowerCase();
     if(!it.text.trim() || have.has(key)) return;
     have.add(key);
-    const q = { id:uid(), used:0, type:it.type, text:it.text.trim(), answer:(it.answer||'').trim(), source:A.source, chapter:A.chapter.trim(), marks:A.marks[it.type] || PG_DEFAULT_MARKS[it.type] };
+    const q = { id:uid(), used:0, type:it.type, text:it.text.trim(), answer:(it.answer||'').trim(), source:A.source, chapter:A.chapter.trim(), marks:A.marks[it.type] || PG_DEFAULT_MARKS[it.type], lang: it.textUr ? 'both' : (pgSenior(PG.cls) ? 'en' : A.lang) };
+    if(it.textUr && it.textUr.trim()) q.textUr = it.textUr.trim();
     PG.bank.push(q); A.recent.unshift(q); n++;
   });
   A.recent = A.recent.slice(0,12);
@@ -5645,20 +5727,22 @@ async function pgAddMcq(){
   if(!m.q.trim() || opts.filter(Boolean).length < 2){ PG.add.note = '<div class="msg-err">Write the question and at least two options.</div>'; pgRenderBody(); return; }
   const text = m.q.trim() + '\n' + opts.filter(Boolean).join('\n');
   const answer = m.ans!=='' && opts[+m.ans] ? opts[+m.ans] : '';
-  const n = await pgAddStore([{ type:'MCQ', text, answer }]);
-  if(n){ m.q = ''; m.o = ['','','','']; m.ans = ''; }
+  const textUr = pgSenior(PG.cls) && m.qu.trim() ? m.qu.trim() + '\n' + m.ou.map((o,i)=>o.trim() ? `(${'abcd'[i]}) ${o.trim()}` : null).filter(Boolean).join('\n') : '';
+  const n = await pgAddStore([{ type:'MCQ', text, answer, textUr }]);
+  if(n){ m.q = ''; m.o = ['','','','']; m.ans = ''; m.qu = ''; m.ou = ['','','','']; }
   pgRenderBody();
 }
 async function pgAddBulk(k){
-  const items = (PG.add.bulk[k]||'').split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
+  const urL = pgSenior(PG.cls) ? (PG.add.bulkUr[k]||'').split('\n').map(l=>l.trim()).filter(Boolean) : [];
+  const items = (PG.add.bulk[k]||'').split('\n').map(l=>l.trim()).filter(Boolean).map((l,ix)=>{
     const i = l.indexOf(' | ');
     let q = i>0 ? l.slice(0,i).trim() : l, a = i>0 ? l.slice(i+3).trim() : '';
     if(k==='TF'){ if(/^(t|true|tick|✓)$/i.test(a)) a = 'True'; else if(/^(f|false|cross|✗|x)$/i.test(a)) a = 'False'; }
-    return { type:k, text:q, answer:a };
+    return { type:k, text:q, answer:a, textUr:(urL[ix]||'') };
   });
   if(!items.length){ PG.add.note = '<div class="msg-err">Write at least one line first.</div>'; pgRenderBody(); return; }
   const n = await pgAddStore(items);
-  if(n) PG.add.bulk[k] = '';
+  if(n){ PG.add.bulk[k] = ''; if(PG.add.bulkUr) PG.add.bulkUr[k] = ''; }
   pgRenderBody();
 }
 async function pgAddMatch(){
