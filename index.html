@@ -4147,7 +4147,7 @@ function renderPaperGenerator(){
     return;
   }
   const subs = PG.cls ? (DB.classSubjects[PG.cls] || []) : [];
-  const tabs = [['auto','Generate Test'],['import','Import PDF'],['bank','Question Bank'],['manual','Manual'],['smart','Smart Paper (AI)'],['ai','AI Questions'],['check','Check Sheets'],['saved','Saved']];
+  const tabs = [['auto','Generate Test'],['add','Add Questions'],['manual','Manual Paper'],['bank','Question Bank'],['import','Import PDF'],['check','Check Sheets (AI)'],['saved','Saved']];
   box.innerHTML = `
     <h3>Paper Generator <span style="font-size:11px;background:var(--navy-900);color:#fff;padding:2px 8px;border-radius:10px;vertical-align:middle;">ADMIN ONLY</span></h3>
     <p class="note-inline" style="margin:-6px 0 14px;">Build a question bank (exercise + conceptual past-paper questions), then make a paper manually or automatically. Only this admin account can see or use any of this.</p>
@@ -4191,6 +4191,7 @@ function pgRenderBody(){
   if(!PG.cls || !PG.subject){ b.innerHTML = pgNeedScope(); return; }
   if(PG.tab==='bank') b.innerHTML = pgBankHTML();
   else if(PG.tab==='import') b.innerHTML = pgImportHTML();
+  else if(PG.tab==='add') b.innerHTML = pgAddHTML();
   else if(PG.tab==='smart') b.innerHTML = pgSmartHTML();
   else if(PG.tab==='ai') b.innerHTML = pgAiHTML();
   else if(PG.tab==='check'){ b.innerHTML = pgCheckHTML(); pgChkRefresh(); }
@@ -4234,7 +4235,7 @@ function pgBankHTML(){
     ${list.length ? `<div style="overflow-x:auto;"><table>
       <tr><th>Question</th><th>Type</th><th>Source</th><th>Chapter</th><th>Marks</th><th>Used</th><th></th></tr>
       ${list.map(q=>`<tr><td dir="auto" style="white-space:pre-line;min-width:240px;">${esc(pgShort(q.text,220))}${q.answer?`<details style="margin-top:4px;"><summary style="cursor:pointer;font-size:12px;color:var(--success);">&#10003; Solution</summary><div dir="auto" style="white-space:pre-line;font-size:13px;">${esc(q.answer)}</div></details>`:''}</td><td>${esc(q.type)}</td><td>${esc(q.source)}</td><td>${esc(q.chapter||'-')}</td><td>${esc(q.marks)}</td><td>${q.used||0}</td>
-        <td style="white-space:nowrap;"><button type="button" class="tag-btn" style="padding:4px 10px;font-size:12px;" onclick="pgSolveBank('${q.id}')">${q.answer?'Re-solve':'Get Solution'}</button> <button type="button" class="tag-btn ghost" style="padding:4px 10px;font-size:12px;" onclick="PG.editId='${q.id}';pgRenderBody();document.getElementById('pgqText').scrollIntoView({behavior:'smooth',block:'center'})">Edit</button>
+        <td style="white-space:nowrap;"><button type="button" class="tag-btn ghost" style="padding:4px 10px;font-size:12px;" onclick="PG.editId='${q.id}';pgRenderBody();document.getElementById('pgqText').scrollIntoView({behavior:'smooth',block:'center'})">Edit</button>
         <button type="button" class="tag-btn danger" style="padding:4px 10px;font-size:12px;" onclick="pgDeleteQuestion('${q.id}')">Delete</button></td></tr>`).join('')}
     </table></div>` : '<div class="empty">No questions yet for this filter.</div>'}`;
 }
@@ -4528,11 +4529,10 @@ function pgRenderPaper(){
             <textarea rows="2" dir="auto" style="flex:1;padding:8px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:14px;" oninput="PG.paper.sections['${t}'][${i}].text=this.value">${esc(q.text)}</textarea>
             <input type="number" min="0" step="0.5" value="${esc(q.marks)}" style="width:64px;padding:6px;border:1px solid var(--line);border-radius:6px;" title="Marks" onchange="PG.paper.sections['${t}'][${i}].marks=parseFloat(this.value)||0;pgRenderPaper()">
           </div>
-          <details style="margin-top:6px;"><summary style="cursor:pointer;font-size:12px;color:var(--navy-900);">Answer / Solution ${q.answer?'&#10003;':'(none)'}</summary><textarea rows="3" dir="auto" style="width:100%;margin-top:4px;padding:8px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:13px;" oninput="PG.paper.sections['${t}'][${i}].answer=this.value">${esc(q.answer||'')}</textarea><button type="button" class="tag-btn" style="padding:3px 9px;font-size:11px;margin-top:4px;" onclick="pgSolvePaper('${t}',${i})">Get solution (AI)</button></details>
+          <details style="margin-top:6px;"><summary style="cursor:pointer;font-size:12px;color:var(--navy-900);">Answer / Solution ${q.answer?'&#10003;':'(none)'}</summary><textarea rows="3" dir="auto" style="width:100%;margin-top:4px;padding:8px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:13px;" oninput="PG.paper.sections['${t}'][${i}].answer=this.value">${esc(q.answer||'')}</textarea></details>
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center;">
             <small style="color:var(--muted);">${esc(q.source)} &middot; ${esc(q.chapter||'no chapter')}</small>
             <button type="button" class="tag-btn" style="padding:4px 10px;font-size:12px;" onclick="pgReplace('${t}',${i})">&#8635; Replace</button>
-            <button type="button" class="tag-btn" style="padding:4px 10px;font-size:12px;" onclick="this.disabled=true;this.textContent='Working…';pgAiNew('${t}',${i})">&#10024; New by AI</button>
             <select style="max-width:240px;padding:4px;font-size:12px;border:1px solid var(--line);border-radius:6px;" onchange="if(this.value)pgReplaceWith('${t}',${i},this.value)">
               <option value="">Choose replacement&hellip;</option>
               ${pool.slice(0,60).map(x=>`<option value="${x.id}">${esc(pgShort(x.text,70))}</option>`).join('')}
@@ -4679,8 +4679,8 @@ async function pgClaude(system, user, maxTokens, images){
     contents:[{ role:'user', parts }],
     generationConfig:{ maxOutputTokens: Math.min(maxTokens||4000, 8192), temperature:0.4 }
   });
-  const models = [PG.gModel, PG_GEMINI_MODEL, 'gemini-flash-latest', 'gemini-2.5-flash'].filter((m,i,a)=>m && a.indexOf(m)===i);
-  let lastMsg = '';
+  const models = [PG.gModel, PG_GEMINI_MODEL, 'gemini-flash-lite-latest', 'gemini-flash-latest', 'gemini-2.5-flash-lite', 'gemini-2.5-flash'].filter((m,i,a)=>m && a.indexOf(m)===i);
+  let lastMsg = '', limitHit = false;
   for(let mi=0; mi<models.length; mi++){
     const model = models[mi];
     const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent?key='+encodeURIComponent(key), {
@@ -4690,7 +4690,7 @@ async function pgClaude(system, user, maxTokens, images){
     if(!r.ok){
       const msg = (d.error && d.error.message) || ('AI request failed ('+r.status+')');
       lastMsg = msg;
-      if(r.status===429) throw new Error('Free limit reached for now — wait a minute (or until tomorrow) and try again. ('+msg+')');
+      if(r.status===429){ limitHit = true; continue; }   // this model's free limit is used up: try the next model
       const hint = (msg.match(/use\s+models\/(gemini-[\w.\-]+)/i)||[])[1];   // Google names the replacement model in its message
       if(hint && !models.includes(hint)) models.splice(mi+1, 0, hint);
       if(r.status===404 || /no longer available|not found|not supported|deprecated/i.test(msg)) continue;
@@ -4701,6 +4701,7 @@ async function pgClaude(system, user, maxTokens, images){
     if(!out) throw new Error('The AI gave no answer (it may have blocked the content). Try again with clearer photos or a smaller chapter.');
     return out.map(x=>x.text||'').join('');
   }
+  if(limitHit) throw new Error('The free AI limit is finished for now (the free plan allows only a small number of AI requests per day, about 20 per model). It resets by itself, usually around midday Pakistan time. Meanwhile use the built-in reader for scanned PDFs, or paste the text.');
   throw new Error(lastMsg || 'No AI model is available for this key.');
 }
 async function pgSaveKey(){
@@ -4858,6 +4859,7 @@ function pgChkTotals(rows){
   return { got: rows.reduce((a,x)=>a+(+x.marks||0),0), max: rows.reduce((a,x)=>a+(+x.max||0),0) };
 }
 function pgCheckHTML(){
+  if(!(PG.cfg && PG.cfg.apiKey)) return '<p class="note-inline" style="margin:0 0 12px;">The AI is used only to check students\' answer sheets. First save the free AI key:</p>' + pgAiHTML();
   const papers = PG.saved.filter(s=>s.paper && s.paper.cls===PG.cls && s.paper.subject===PG.subject);
   if(!papers.length) return '<div class="empty">First save a paper (Manual Paper or Auto Paper, then "Save Paper"). Then come back here to check students\' sheets.</div>';
   if(!papers.some(s=>s.paper.id===PG.chk.paperId)) PG.chk.paperId = papers[0].paper.id;
@@ -5377,8 +5379,8 @@ function pgGtPool(t){
 }
 function pgAutoHTML(){
   const G = PG.gt;
-  if(!PG.bank.length) return `<div class="empty">The question bank for <b>${esc(PG.subject)}</b> is empty.<br>Open <b>Import PDF</b>, choose the source (Exercise / Past Paper / Additional) and upload the PDF <b>once</b> &mdash; the questions stay saved.</div>
-    <div style="margin-top:10px;"><button type="button" class="btn-gold" onclick="pgTab('import')">Go to Import PDF</button></div>`;
+  if(!PG.bank.length) return `<div class="empty">The question bank for <b>${esc(PG.subject)}</b> is empty.<br>Add questions once (type them, or import a PDF) &mdash; they stay saved.</div>
+    <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;"><button type="button" class="btn-gold" onclick="pgTab('add')">Add Questions</button><button type="button" class="tag-btn" onclick="pgTab('import')">Import PDF</button></div>`;
   const cnt = f=>PG.bank.filter(f).length;
   const chs = pgChapters();
   const picked = Object.keys(G.units).filter(k=>G.units[k]).length;
@@ -5412,6 +5414,7 @@ function pgAutoHTML(){
         <td${av? '' : ' style="color:#b00020;"'}>${av}</td></tr>`; }).join('')}
     </table></div>` : '<p class="note-inline">Choose at least one test type.</p>'}
     <label style="${box}margin:10px 0;"><input type="checkbox" style="width:auto;" ${G.avoid?'checked':''} onchange="PG.gt.avoid=this.checked"> Prefer questions not used in earlier saved papers</label>
+    <label style="${box}margin:0 0 10px;"><input type="checkbox" style="width:auto;" ${G.spread?'checked':''} onchange="PG.gt.spread=this.checked"> Take questions evenly from every chosen chapter</label>
     <div style="display:flex;flex-wrap:wrap;gap:8px;">
       <button type="button" class="btn-gold" onclick="pgGenerateAuto()">Generate</button>
       ${PG.paper ? '<button type="button" class="tag-btn" onclick="pgGenerateAuto()">&#8635; Generate again</button>' : ''}
@@ -5426,7 +5429,7 @@ function pgGenerateAuto(){
     if(!G.order.includes(t)) return;
     const n = Math.round(G.n[t]||0); if(!n) return;
     const pool = pgGtPool(t);
-    const picked = G.avoid ? pgPickLeastUsed(pool, n) : pgShuffle(pool).slice(0, n);
+    const picked = G.spread ? pgPickSpread(pool, n, G.avoid) : (G.avoid ? pgPickLeastUsed(pool, n) : pgShuffle(pool).slice(0, n));
     if(picked.length < n) short.push(`${PG_TYPE_LABEL[t]}: wanted ${n}, only ${picked.length} available`);
     picked.forEach(q=>sec[t].push({ ...q, marks: G.marks[t] || PG_DEFAULT_MARKS[t] }));
   });
@@ -5475,47 +5478,73 @@ function pgScannedPanelHTML(){
   return `<div class="msg-err">This PDF has no selectable text (it looks like scanned pictures), so it cannot be read directly.</div>
     <div style="margin-top:10px;border:1px solid var(--line);border-radius:6px;padding:12px;background:#fff;">
       <b>Read the scanned pages with AI</b><span style="color:var(--muted);"> &mdash; this PDF has ${PG.pdfPages||'?'} pages</span>
-      ${hasKey ? '' : '<p class="note-inline" style="margin:8px 0;">First save the free AI key in the &quot;AI Questions&quot; tab.</p>'}
       <div class="row-2" style="margin-top:8px;">
         <div class="field"><label>From page</label><input id="pgOcrFrom" type="number" min="1" value="1"></div>
         <div class="field"><label>To page (at most 20 at a time)</label><input id="pgOcrTo" type="number" min="1" value="10"></div>
       </div>
-      <button type="button" class="btn-gold" onclick="pgOcrPages()">Read these pages</button>
-      <p class="note-inline" style="margin-top:8px;">Choose only the pages with the exercise / questions of one chapter. The text is put in the box below so you can check it, then press Find Questions.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        <button type="button" class="btn-gold" onclick="pgOcrPages('local')">Read with built-in reader (free, no limit, slower)</button>
+      </div>
+      <p class="note-inline" style="margin-top:8px;">Choose only the pages with the exercise / questions of one chapter. The text is put in the box below so you can check it, then press Find Questions. The built-in reader works best for printed English.</p>
     </div>`;
 }
-async function pgOcrPages(){
+async function pgLoadTesseract(){
+  if(window.Tesseract) return;
+  await new Promise((res,rej)=>{
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    sc.onload = res; sc.onerror = ()=>rej(new Error('The built-in reader could not load — check the internet connection and try again.'));
+    document.head.appendChild(sc);
+  });
+}
+async function pgOcrPages(mode){
   if(!pgOK()) return;
+  mode = mode || 'ai';
   const st = document.getElementById('pgImpStatus');
   const file = document.getElementById('pgImpFile').files[0];
   const from = parseInt(document.getElementById('pgOcrFrom').value) || 1;
   const to = parseInt(document.getElementById('pgOcrTo').value) || from;
   if(!file){ st.innerHTML = '<div class="msg-err">Choose the PDF again (the page was refreshed).</div>'; return; }
-  if(!(PG.cfg && PG.cfg.apiKey)){ st.innerHTML = '<div class="msg-err">Save the free AI key first (AI Questions tab).</div>'; return; }
+  if(mode==='ai' && !(PG.cfg && PG.cfg.apiKey)){ st.innerHTML = '<div class="msg-err">Save the free AI key first (AI Questions tab), or use the built-in reader.</div>'; return; }
   if(to < from || to-from+1 > 20){ st.innerHTML = '<div class="msg-err">Choose at most 20 pages, and make sure the last page is not before the first.</div>'; return; }
+  let worker = null;
   try{
     await pgLoadPdfJs();
     const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
     const last = Math.min(to, pdf.numPages);
+    const render = async (q, scale)=>{
+      const page = await pdf.getPage(q);
+      const vp = page.getViewport({ scale });
+      const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height;
+      await page.render({ canvasContext:c.getContext('2d'), viewport:vp }).promise;
+      return c;
+    };
     let all = '';
-    for(let p=from; p<=last; p+=3){
-      const imgs = [];
-      for(let q=p; q<=Math.min(p+2, last); q++){
-        const page = await pdf.getPage(q);
-        const vp = page.getViewport({ scale:1.5 });
-        const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height;
-        await page.render({ canvasContext:c.getContext('2d'), viewport:vp }).promise;
-        imgs.push(c.toDataURL('image/jpeg', 0.8));
+    if(mode==='local'){
+      st.innerHTML = '<p class="note-inline">Loading the built-in reader&hellip; the first time it downloads a small language file.</p>';
+      await pgLoadTesseract();
+      worker = await window.Tesseract.createWorker('eng');
+      for(let q=from; q<=last; q++){
+        st.innerHTML = `<p class="note-inline">Reading page ${q} (${q-from+1} of ${last-from+1})&hellip; please wait and keep this page open.</p>`;
+        const c = await render(q, 2);
+        const r = await worker.recognize(c);
+        all += (r.data.text || '').trim() + '\n';
       }
-      st.innerHTML = `<p class="note-inline">Reading pages ${p}&ndash;${Math.min(p+2,last)} of ${from}&ndash;${last}&hellip; please wait.</p>`;
-      const out = await pgClaude('You are an OCR engine. Output only the text that is printed on the page images.',
-        'Transcribe ALL the text on these page images exactly as printed, in reading order. Keep headings, question numbers such as Q.1, (i), (a), and keep each question on its own line. If an answer is printed with a question, put it on the next line starting with Ans: . Leave out page numbers, running headers and footers. Do not summarise, translate, correct or add anything. Plain text only.', 8000, imgs);
-      all += out.trim() + '\n';
-      if(p+3 <= last) await new Promise(r=>setTimeout(r,4000));
+    } else {
+      for(let p=from; p<=last; p+=5){            // 5 pages per AI request keeps the daily free limit going longer
+        const imgs = [];
+        for(let q=p; q<=Math.min(p+4, last); q++) imgs.push((await render(q, 1.5)).toDataURL('image/jpeg', 0.8));
+        st.innerHTML = `<p class="note-inline">AI is reading pages ${p}&ndash;${Math.min(p+4,last)} of ${from}&ndash;${last}&hellip; please wait.</p>`;
+        const out = await pgClaude('You are an OCR engine. Output only the text that is printed on the page images.',
+          'Transcribe ALL the text on these page images exactly as printed, in reading order. Keep headings, question numbers such as Q.1, (i), (a), and keep each question on its own line. If an answer is printed with a question, put it on the next line starting with Ans: . Leave out page numbers, running headers and footers. Do not summarise, translate, correct or add anything. Plain text only.', 8000, imgs);
+        all += out.trim() + '\n';
+        if(p+5 <= last) await new Promise(r=>setTimeout(r,4000));
+      }
     }
     document.getElementById('pgImpText').value = all;
     st.innerHTML = `<div class="msg-ok">Pages ${from}&ndash;${last} read. The text is in the box below &mdash; look it over, then press Find Questions.</div>`;
   }catch(e){ console.error(e); st.innerHTML = `<div class="msg-err">${esc(e.message||'Could not read these pages')}</div>`; }
+  finally{ if(worker){ try{ await worker.terminate(); }catch(e){} } }
 }
 
 
@@ -5527,6 +5556,142 @@ async function pgClearBank(){
   pgSet('<div class="msg-ok">The question bank for this subject is now empty. Import again with the new version.</div>');
   renderPaperGenerator();
 }
+
+/* ---------------- ADD QUESTIONS: type them yourself once, they stay saved forever ---------------- */
+PG.add = {
+  kind:'MCQ', chapter:'', source:'Exercise', recent:[], note:'',
+  marks:{ MCQ:1, Short:2, Long:5, TF:1, Fill:1, Match:5 },
+  mcq:{ q:'', o:['','','',''], ans:'' },
+  bulk:{ Short:'', Long:'', TF:'', Fill:'' },
+  match:{ instr:'Match the items in Column A with those in Column B.', L:['','','','',''], R:['','','','',''] }
+};
+PG.gt.spread = true;
+const PG_ADD_KINDS = [['MCQ','MCQs'],['Short','Short Questions'],['Long','Long Questions'],['TF','True / False (✓ ✗)'],['Fill','Fill in the Blanks'],['Match','Match Columns']];
+const PG_ADD_HELP = {
+  Short:'Write one question on each line. Add as many lines as you like.',
+  Long:'Write one question on each line. Add as many lines as you like.',
+  TF:'Write one statement on each line. To save the answer too, end the line with  |  True  or  |  False.',
+  Fill:'Write one sentence on each line, with ____ where the blank is. To save the answer, add  |  the missing word  at the end of the line.'
+};
+function pgAddHTML(){
+  const A = PG.add, k = A.kind, chs = pgChapters();
+  const inp = 'width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:14px;';
+  let body = '';
+  if(k==='MCQ'){
+    body = `
+      <div class="field"><label>Question</label><textarea rows="2" dir="auto" style="${inp}" oninput="PG.add.mcq.q=this.value">${esc(A.mcq.q)}</textarea></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+        ${[0,1,2,3].map(i=>`<div><label style="font-size:13px;">Option (${'abcd'[i]})</label><input dir="auto" style="${inp}" value="${esc(A.mcq.o[i])}" oninput="PG.add.mcq.o[${i}]=this.value"></div>`).join('')}
+      </div>
+      <div class="field"><label>Correct option (optional, used for the answer key)</label>
+        <select style="padding:8px;border:1px solid var(--line);border-radius:6px;" onchange="PG.add.mcq.ans=this.value">
+          <option value="">&mdash; not set &mdash;</option>${[0,1,2,3].map(i=>`<option value="${i}" ${A.mcq.ans===String(i)?'selected':''}>(${'abcd'[i]})</option>`).join('')}</select></div>
+      <button type="button" class="btn-gold" onclick="pgAddMcq()">Add this MCQ</button>`;
+  } else if(k==='Match'){
+    body = `
+      <div class="field"><label>Instruction line</label><input dir="auto" style="${inp}" value="${esc(A.match.instr)}" oninput="PG.add.match.instr=this.value"></div>
+      <p class="note-inline" style="margin:0 0 6px;">Write each correct pair on one row (left item and its match on the right). The site shuffles the right column for the paper and keeps the answer key.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 8px;">
+        <b style="font-size:13px;">Column A</b><b style="font-size:13px;">Column B</b>
+        ${A.match.L.map((v,i)=>`<input dir="auto" style="${inp}" value="${esc(v)}" oninput="PG.add.match.L[${i}]=this.value"><input dir="auto" style="${inp}" value="${esc(A.match.R[i])}" oninput="PG.add.match.R[${i}]=this.value">`).join('')}
+      </div>
+      <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;">
+        <button type="button" class="tag-btn" onclick="PG.add.match.L.push('');PG.add.match.R.push('');pgRenderBody()">+ Add a row</button>
+        <button type="button" class="btn-gold" onclick="pgAddMatch()">Add this Match question</button>
+      </div>`;
+  } else {
+    body = `
+      <p class="note-inline" style="margin:0 0 6px;">${PG_ADD_HELP[k]}</p>
+      <textarea rows="8" dir="auto" style="${inp}" placeholder="One per line&hellip;" oninput="PG.add.bulk['${k}']=this.value">${esc(A.bulk[k])}</textarea>
+      <div style="margin-top:10px;"><button type="button" class="btn-gold" onclick="pgAddBulk('${k}')">Add all lines</button></div>`;
+  }
+  return `
+    <p class="note-inline" style="margin:0 0 10px;">Type the questions here once &mdash; they are saved for good under the chapter you choose. Generate Test and Manual Paper then use them. Bank now has <b>${PG.bank.length}</b> questions for ${esc(PG.subject)}.</p>
+    ${A.note ? `<div>${A.note}</div>` : ''}
+    <div class="row-2">
+      <div class="field"><label>Chapter / Unit</label><input list="pgAddChapList" dir="auto" value="${esc(A.chapter)}" placeholder="e.g. Unit 1: Motion" oninput="PG.add.chapter=this.value"><datalist id="pgAddChapList">${chs.map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div>
+      <div class="row-2" style="gap:8px;">
+        <div class="field"><label>Source</label><select onchange="PG.add.source=this.value">${pgOpts(['Exercise','Past Paper','Additional'], A.source)}</select></div>
+        <div class="field"><label>Marks each</label><input type="number" min="0.5" step="0.5" value="${A.marks[k]}" oninput="PG.add.marks['${k}']=parseFloat(this.value)||1"></div>
+      </div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 14px;">
+      ${PG_ADD_KINDS.map(x=>`<button type="button" class="tag-btn ${k===x[0]?'':'ghost'}" onclick="PG.add.kind='${x[0]}';PG.add.note='';pgRenderBody()">${x[1]}</button>`).join('')}
+    </div>
+    ${body}
+    ${A.recent.length ? `<h4 style="margin:20px 0 6px;">Added just now</h4>
+      <div style="border:1px solid var(--line);border-radius:6px;background:#fff;">${A.recent.map(r=>`<div style="display:flex;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line);align-items:flex-start;"><span dir="auto" style="flex:1;white-space:pre-line;font-size:13px;">${esc(pgShort(r.text,200))}</span><button type="button" class="tag-btn danger" style="padding:2px 8px;font-size:11px;" onclick="pgAddUndo('${r.id}')">Remove</button></div>`).join('')}</div>` : ''}`;
+}
+async function pgAddStore(items){
+  if(!pgOK()) return 0;
+  const A = PG.add, have = new Set(PG.bank.map(q=>q.type+'|'+q.text.trim().toLowerCase()));
+  let n = 0;
+  items.forEach(it=>{
+    const key = it.type+'|'+it.text.trim().toLowerCase();
+    if(!it.text.trim() || have.has(key)) return;
+    have.add(key);
+    const q = { id:uid(), used:0, type:it.type, text:it.text.trim(), answer:(it.answer||'').trim(), source:A.source, chapter:A.chapter.trim(), marks:A.marks[it.type] || PG_DEFAULT_MARKS[it.type] };
+    PG.bank.push(q); A.recent.unshift(q); n++;
+  });
+  A.recent = A.recent.slice(0,12);
+  if(!n){ A.note = '<div class="msg-err">Nothing new to add (empty, or the same question is already saved).</div>'; return 0; }
+  const ok = await pgSaveBank();
+  A.note = ok ? `<div class="msg-ok">${n} question(s) saved.</div>` : (PG.msg || '');
+  return ok ? n : 0;
+}
+async function pgAddMcq(){
+  const m = PG.add.mcq;
+  const opts = m.o.map((o,i)=>o.trim() ? `(${'abcd'[i]}) ${o.trim()}` : null);
+  if(!m.q.trim() || opts.filter(Boolean).length < 2){ PG.add.note = '<div class="msg-err">Write the question and at least two options.</div>'; pgRenderBody(); return; }
+  const text = m.q.trim() + '\n' + opts.filter(Boolean).join('\n');
+  const answer = m.ans!=='' && opts[+m.ans] ? opts[+m.ans] : '';
+  const n = await pgAddStore([{ type:'MCQ', text, answer }]);
+  if(n){ m.q = ''; m.o = ['','','','']; m.ans = ''; }
+  pgRenderBody();
+}
+async function pgAddBulk(k){
+  const items = (PG.add.bulk[k]||'').split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
+    const i = l.indexOf(' | ');
+    let q = i>0 ? l.slice(0,i).trim() : l, a = i>0 ? l.slice(i+3).trim() : '';
+    if(k==='TF'){ if(/^(t|true|tick|✓)$/i.test(a)) a = 'True'; else if(/^(f|false|cross|✗|x)$/i.test(a)) a = 'False'; }
+    return { type:k, text:q, answer:a };
+  });
+  if(!items.length){ PG.add.note = '<div class="msg-err">Write at least one line first.</div>'; pgRenderBody(); return; }
+  const n = await pgAddStore(items);
+  if(n) PG.add.bulk[k] = '';
+  pgRenderBody();
+}
+async function pgAddMatch(){
+  const M = PG.add.match;
+  const rows = M.L.map((l,i)=>({ l:l.trim(), r:(M.R[i]||'').trim() })).filter(x=>x.l && x.r);
+  if(rows.length < 2){ PG.add.note = '<div class="msg-err">Write at least two complete pairs (both columns).</div>'; pgRenderBody(); return; }
+  let perm = rows.map((_,i)=>i);
+  for(let t=0;t<12;t++){ perm = pgShuffle(perm); if(perm.some((v,i)=>v!==i)) break; }   // right column shuffled, not lined up
+  const letter = i=>String.fromCharCode(97+i);
+  const lines = rows.map((x,i)=>`${i+1}. ${x.l} || (${letter(i)}) ${rows[perm[i]].r}`);
+  const answer = rows.map((x,i)=>`${i+1}-${letter(perm.indexOf(i))}`).join(', ');
+  const n = await pgAddStore([{ type:'Match', text:(M.instr.trim() || 'Match the items in Column A with those in Column B.') + '\n' + lines.join('\n'), answer }]);
+  if(n){ M.L = ['','','','','']; M.R = ['','','','','']; }
+  pgRenderBody();
+}
+async function pgAddUndo(id){
+  if(!pgOK()) return;
+  PG.bank = PG.bank.filter(q=>q.id!==id);
+  PG.add.recent = PG.add.recent.filter(q=>q.id!==id);
+  await pgSaveBank();
+  pgRenderBody();
+}
+function pgPickSpread(pool, n, avoid){
+  const groups = {};
+  pool.forEach(q=>{ const c = q.chapter || ''; (groups[c] = groups[c] || []).push(q); });
+  const lists = Object.values(groups).map(g=>avoid ? pgPickLeastUsed(g, g.length) : pgShuffle(g));
+  const order = pgShuffle(lists.map((_,i)=>i)), out = [];
+  while(out.length < n && lists.some(l=>l.length)){
+    for(const i of order){ if(out.length>=n) break; if(lists[i].length) out.push(lists[i].shift()); }
+  }
+  return out;
+}
+
 </script>
 </body>
 </html>
