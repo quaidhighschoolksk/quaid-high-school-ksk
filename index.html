@@ -4619,7 +4619,7 @@ async function pgDeleteSaved(docId){
    admin's browser after login. Set a monthly spending limit in the Anthropic console. */
 const PG_MODEL = 'claude-sonnet-5-5';
 function pgSrcKey(){ return 'src__' + (PG.cls+'__'+PG.subject).replace(/[\/\s]+/g,'_'); }
-const PG_GEMINI_MODEL = 'gemini-2.5-flash'; // free-tier model; change here if Google renames it
+const PG_GEMINI_MODEL = 'gemini-3.8-flash'; // free-tier model; if Google retires it the code tries the model Google suggests, then other fallbacks
 async function pgClaude(system, user, maxTokens, images){
   const key = PG.cfg && PG.cfg.apiKey;
   if(!key) throw new Error('Save the AI key first (AI Questions tab).');
@@ -4640,23 +4640,34 @@ async function pgClaude(system, user, maxTokens, images){
   // Google Gemini (free key from aistudio.google.com/apikey)
   const parts = images.map(d=>({ inlineData:{ mimeType:'image/jpeg', data:d.split(',')[1] } }));
   parts.push({ text:user });
-  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+PG_GEMINI_MODEL+':generateContent?key='+encodeURIComponent(key), {
-    method:'POST',
-    headers:{ 'content-type':'application/json' },
-    body: JSON.stringify({
-      systemInstruction:{ parts:[{ text:system }] },
-      contents:[{ role:'user', parts }],
-      generationConfig:{ maxOutputTokens: Math.min(maxTokens||4000, 8192), temperature:0.4 }
-    })
+  const body = JSON.stringify({
+    systemInstruction:{ parts:[{ text:system }] },
+    contents:[{ role:'user', parts }],
+    generationConfig:{ maxOutputTokens: Math.min(maxTokens||4000, 8192), temperature:0.4 }
   });
-  const d = await r.json().catch(()=>({}));
-  if(!r.ok){
-    const msg = (d.error && d.error.message) || ('AI request failed ('+r.status+')');
-    throw new Error(r.status===429 ? 'Free limit reached for now — wait a minute (or until tomorrow) and try again. ('+msg+')' : msg);
+  const models = [PG.gModel, PG_GEMINI_MODEL, 'gemini-flash-latest', 'gemini-2.5-flash'].filter((m,i,a)=>m && a.indexOf(m)===i);
+  let lastMsg = '';
+  for(let mi=0; mi<models.length; mi++){
+    const model = models[mi];
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent?key='+encodeURIComponent(key), {
+      method:'POST', headers:{ 'content-type':'application/json' }, body
+    });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok){
+      const msg = (d.error && d.error.message) || ('AI request failed ('+r.status+')');
+      lastMsg = msg;
+      if(r.status===429) throw new Error('Free limit reached for now — wait a minute (or until tomorrow) and try again. ('+msg+')');
+      const hint = (msg.match(/use\s+models\/(gemini-[\w.\-]+)/i)||[])[1];   // Google names the replacement model in its message
+      if(hint && !models.includes(hint)) models.splice(mi+1, 0, hint);
+      if(r.status===404 || /no longer available|not found|not supported|deprecated/i.test(msg)) continue;
+      throw new Error(msg);
+    }
+    PG.gModel = model;     // remember the model that worked
+    const out = d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts;
+    if(!out) throw new Error('The AI gave no answer (it may have blocked the content). Try again with clearer photos or a smaller chapter.');
+    return out.map(x=>x.text||'').join('');
   }
-  const out = d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts;
-  if(!out) throw new Error('The AI gave no answer (it may have blocked the content). Try again with clearer photos or a smaller chapter.');
-  return out.map(x=>x.text||'').join('');
+  throw new Error(lastMsg || 'No AI model is available for this key.');
 }
 async function pgSaveKey(){
   if(!pgOK()) return;
