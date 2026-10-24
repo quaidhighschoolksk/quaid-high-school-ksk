@@ -4269,11 +4269,11 @@ function pgImportHTML(){
     <p class="note-inline" style="margin:0 0 12px;">Upload a book / notes / past paper PDF (or a .txt file), or paste text. The text is read inside your browser &mdash; the file itself is <b>not</b> uploaded anywhere. Questions are detected, then you review and save the good ones.</p>
     <div class="row-2">
       <div class="field"><label>These questions are from</label><select id="pgImpSource" onchange="document.getElementById('pgImpOnlyEx').checked=(this.value==='Exercise')">${pgOpts(PG_SOURCES,'Exercise')}</select></div>
-      <div class="field"><label>PDF or text file</label><input type="file" id="pgImpFile" accept=".pdf,.txt,application/pdf,text/plain"></div>
+      <div class="field"><label>PDF or text file</label><input type="file" id="pgImpFile" accept=".pdf,.txt,application/pdf,text/plain" onchange="pgImpPicked(this)"><div id="pgImpFileName" style="font-size:13px;margin-top:4px;color:var(--muted);">No file chosen yet</div></div>
     </div>
     <div class="row-2">
       <div class="field"><label>Unit / chapter for all these questions (optional &mdash; use for past papers)</label><input id="pgImpChap" placeholder="e.g. Unit 3: Motion"></div>
-      <label style="display:flex;gap:8px;align-items:center;font-weight:400;"><input type="checkbox" id="pgImpOnlyEx" style="width:auto;" checked> Book: read only the Exercise / Review-questions parts (untick for past papers)</label>
+      <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:8px 0 16px;"><input type="checkbox" id="pgImpOnlyEx" style="width:auto;" checked> Book: read only the Exercise / Review-questions parts (untick for past papers)</label>
     </div>
     <div class="field"><label>&hellip;or paste text here</label><textarea id="pgImpText" rows="5" dir="auto" placeholder="Chapter 1: ...&#10;Q1. What is ...?&#10;Q2. Define ..."></textarea></div>
     <button type="button" class="btn-gold" onclick="pgExtract()">Find Questions</button>
@@ -4372,7 +4372,7 @@ async function pgExtract(){
       if(/\.pdf$/i.test(file.name) || file.type==='application/pdf') text = await pgExtractPdf(file, status);
       else text = await file.text();
     }
-    if(!text.trim()){ status.innerHTML = '<div class="msg-err">Choose a file or paste some text first.</div>'; return; }
+    if(!text.trim()){ status.innerHTML = '<div class="msg-err">No file selected. Scroll up, tap &quot;Choose file&quot;, pick the PDF, wait until its name appears under the button, then press Find Questions again. (Or paste some text.)</div>'; return; }
     PG.lastText = text; PG.lastName = file ? file.name.replace(/\.[^.]+$/,'') : '';
     PG.imp = pgParse(text, source, !!(document.getElementById('pgImpOnlyEx')||{}).checked, ((document.getElementById('pgImpChap')||{}).value||'').trim()).slice(0, 2000);
     PG.impMsg = PG.imp.length
@@ -5410,6 +5410,12 @@ function pgMoveSec(t, dir){
   pgRenderPaper();
 }
 
+
+function pgImpPicked(el){
+  const f = el.files && el.files[0], n = document.getElementById('pgImpFileName');
+  if(!n) return;
+  n.innerHTML = f ? '&#10003; ' + esc(f.name) + ' (' + (f.size/1048576).toFixed(1) + ' MB) &mdash; now press Find Questions' : 'No file chosen yet';
+}
 </script>
 </body>
 </html>
