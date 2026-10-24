@@ -4653,10 +4653,20 @@ async function pgClaude(system, user, maxTokens, images){
 }
 async function pgSaveKey(){
   if(!pgOK()) return;
-  const k = document.getElementById('pgKeyIn').value.trim();
-  if(!/^(sk-ant-|AIza)/.test(k)){ pgSet('<div class="msg-err">That does not look like a valid key (a free Google key starts with AIza).</div>'); renderPaperGenerator(); return; }
-  try{ await fsDb.collection(PG_COLLECTION).doc('config').set({ apiKey:k }); PG.cfg = { apiKey:k }; pgSet('<div class="msg-ok">AI key saved (visible to admin only).</div>'); }
-  catch(e){ console.error(e); pgSet('<div class="msg-err">Could not save the key: '+esc(e.message||'')+'</div>'); }
+  const k = document.getElementById('pgKeyIn').value.trim().replace(/^["']|["']$/g,'');
+  if(k.length < 20 || /\s/.test(k)){ pgSet('<div class="msg-err">The key looks too short or has a space in it. Copy the whole key again and paste it.</div>'); renderPaperGenerator(); return; }
+  const m = document.getElementById('pgMsg'); if(m) m.innerHTML = '<div class="msg-ok">Testing the key&hellip;</div>';
+  const old = PG.cfg; PG.cfg = { apiKey:k };
+  let note = '';
+  try{ await pgClaude('Reply with the single word OK.', 'Say OK.', 1000); }
+  catch(e){
+    const msg = e.message || '';
+    if(/no answer/i.test(msg)){ /* the server accepted the key */ }
+    else if(/limit|quota|429|rate/i.test(msg)){ note = ' (the free limit is used up for now, but the key itself is fine)'; }
+    else { PG.cfg = old; pgSet('<div class="msg-err">This key did not work: '+esc(msg||'unknown error')+'</div>'); renderPaperGenerator(); return; }
+  }
+  try{ await fsDb.collection(PG_COLLECTION).doc('config').set({ apiKey:k }); pgSet('<div class="msg-ok">AI key saved and working'+note+'.</div>'); }
+  catch(e){ console.error(e); PG.cfg = old; pgSet('<div class="msg-err">The key works, but it could not be saved: '+esc(e.message||'')+' (check the Firestore rules for paper_bank).</div>'); }
   renderPaperGenerator();
 }
 async function pgRemoveKey(){
@@ -4709,7 +4719,7 @@ async function pgSaveSrc(){
 function pgAiHTML(){
   const hasKey = !!(PG.cfg && PG.cfg.apiKey);
   const keyBox = (!hasKey || PG.cfg.change)
-    ? `<div class="admin-block" style="background:#fff;"><div class="field"><label>Free AI key (stored privately, admin only)</label><input type="password" id="pgKeyIn" placeholder="AIza..." autocomplete="off"></div>
+    ? `<div class="admin-block" style="background:#fff;"><div class="field"><label>Free AI key (stored privately, admin only)</label><input type="password" id="pgKeyIn" placeholder="Paste the key here" autocomplete="off"></div>
        <button type="button" class="btn-gold" onclick="pgSaveKey()">Save key</button>
        <p class="note-inline" style="margin-top:10px;"><b>Free, no card needed:</b> open aistudio.google.com/apikey, sign in with a Google account, click &quot;Create API key&quot;, copy it and paste it here. The free plan has daily limits, so if you see a &quot;limit reached&quot; message, wait and try again. (A paid Claude key starting with sk-ant- also works.)</p></div>`
     : `<p class="note-inline" style="margin:0 0 12px;">AI key is saved. <button type="button" class="tag-btn ghost" style="padding:3px 9px;font-size:11px;" onclick="PG.cfg.change=true;pgRenderBody()">Change</button> <button type="button" class="tag-btn danger" style="padding:3px 9px;font-size:11px;" onclick="pgRemoveKey()">Remove</button></p>`;
