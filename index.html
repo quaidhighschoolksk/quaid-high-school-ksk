@@ -4294,6 +4294,7 @@ async function pgLoadPdfJs(){
 async function pgExtractPdf(file, status){
   await pgLoadPdfJs();
   const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  PG.pdfPages = pdf.numPages;
   let out = '';
   for(let p=1; p<=pdf.numPages; p++){
     const tc = await (await pdf.getPage(p)).getTextContent();
@@ -4368,11 +4369,17 @@ async function pgExtract(){
   const file = document.getElementById('pgImpFile').files[0];
   let text = document.getElementById('pgImpText').value;
   try{
+    const typed = text;
+    let fromFile = '';
     if(file){
-      if(/\.pdf$/i.test(file.name) || file.type==='application/pdf') text = await pgExtractPdf(file, status);
-      else text = await file.text();
+      if(/\.pdf$/i.test(file.name) || file.type==='application/pdf') fromFile = await pgExtractPdf(file, status);
+      else fromFile = await file.text();
     }
-    if(!text.trim()){ status.innerHTML = '<div class="msg-err">No file selected. Scroll up, tap &quot;Choose file&quot;, pick the PDF, wait until its name appears under the button, then press Find Questions again. (Or paste some text.)</div>'; return; }
+    text = fromFile.replace(/\s/g,'').length >= 200 ? fromFile : (typed.trim() ? typed : fromFile);
+    if(!text.trim()){
+      if(file){ status.innerHTML = pgScannedPanelHTML(); return; }
+      status.innerHTML = '<div class="msg-err">Choose a PDF / text file, or paste some text, then press Find Questions.</div>'; return;
+    }
     PG.lastText = text; PG.lastName = file ? file.name.replace(/\.[^.]+$/,'') : '';
     PG.imp = pgParse(text, source, !!(document.getElementById('pgImpOnlyEx')||{}).checked, ((document.getElementById('pgImpChap')||{}).value||'').trim()).slice(0, 2000);
     PG.impMsg = PG.imp.length
@@ -5416,6 +5423,56 @@ function pgImpPicked(el){
   if(!n) return;
   n.innerHTML = f ? '&#10003; ' + esc(f.name) + ' (' + (f.size/1048576).toFixed(1) + ' MB) &mdash; now press Find Questions' : 'No file chosen yet';
 }
+
+/* ---------------- scanned PDFs: read chosen pages with the free AI key ---------------- */
+function pgScannedPanelHTML(){
+  const hasKey = !!(PG.cfg && PG.cfg.apiKey);
+  return `<div class="msg-err">This PDF has no selectable text (it looks like scanned pictures), so it cannot be read directly.</div>
+    <div style="margin-top:10px;border:1px solid var(--line);border-radius:6px;padding:12px;background:#fff;">
+      <b>Read the scanned pages with AI</b><span style="color:var(--muted);"> &mdash; this PDF has ${PG.pdfPages||'?'} pages</span>
+      ${hasKey ? '' : '<p class="note-inline" style="margin:8px 0;">First save the free AI key in the &quot;AI Questions&quot; tab.</p>'}
+      <div class="row-2" style="margin-top:8px;">
+        <div class="field"><label>From page</label><input id="pgOcrFrom" type="number" min="1" value="1"></div>
+        <div class="field"><label>To page (at most 20 at a time)</label><input id="pgOcrTo" type="number" min="1" value="10"></div>
+      </div>
+      <button type="button" class="btn-gold" onclick="pgOcrPages()">Read these pages</button>
+      <p class="note-inline" style="margin-top:8px;">Choose only the pages with the exercise / questions of one chapter. The text is put in the box below so you can check it, then press Find Questions.</p>
+    </div>`;
+}
+async function pgOcrPages(){
+  if(!pgOK()) return;
+  const st = document.getElementById('pgImpStatus');
+  const file = document.getElementById('pgImpFile').files[0];
+  const from = parseInt(document.getElementById('pgOcrFrom').value) || 1;
+  const to = parseInt(document.getElementById('pgOcrTo').value) || from;
+  if(!file){ st.innerHTML = '<div class="msg-err">Choose the PDF again (the page was refreshed).</div>'; return; }
+  if(!(PG.cfg && PG.cfg.apiKey)){ st.innerHTML = '<div class="msg-err">Save the free AI key first (AI Questions tab).</div>'; return; }
+  if(to < from || to-from+1 > 20){ st.innerHTML = '<div class="msg-err">Choose at most 20 pages, and make sure the last page is not before the first.</div>'; return; }
+  try{
+    await pgLoadPdfJs();
+    const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    const last = Math.min(to, pdf.numPages);
+    let all = '';
+    for(let p=from; p<=last; p+=3){
+      const imgs = [];
+      for(let q=p; q<=Math.min(p+2, last); q++){
+        const page = await pdf.getPage(q);
+        const vp = page.getViewport({ scale:1.5 });
+        const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height;
+        await page.render({ canvasContext:c.getContext('2d'), viewport:vp }).promise;
+        imgs.push(c.toDataURL('image/jpeg', 0.8));
+      }
+      st.innerHTML = `<p class="note-inline">Reading pages ${p}&ndash;${Math.min(p+2,last)} of ${from}&ndash;${last}&hellip; please wait.</p>`;
+      const out = await pgClaude('You are an OCR engine. Output only the text that is printed on the page images.',
+        'Transcribe ALL the text on these page images exactly as printed, in reading order. Keep headings, question numbers such as Q.1, (i), (a), and keep each question on its own line. Do not summarise, translate, correct or add anything. Plain text only.', 8000, imgs);
+      all += out.trim() + '\n';
+      if(p+3 <= last) await new Promise(r=>setTimeout(r,4000));
+    }
+    document.getElementById('pgImpText').value = all;
+    st.innerHTML = `<div class="msg-ok">Pages ${from}&ndash;${last} read. The text is in the box below &mdash; look it over, then press Find Questions.</div>`;
+  }catch(e){ console.error(e); st.innerHTML = `<div class="msg-err">${esc(e.message||'Could not read these pages')}</div>`; }
+}
+
 </script>
 </body>
 </html>
