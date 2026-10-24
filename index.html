@@ -242,8 +242,10 @@
   #printArea{display:none;}
   @media print{
     body *{ visibility:hidden; }
+    html, body{ height:auto !important; min-height:0 !important; margin:0 !important; overflow:visible !important; }
+    body > *:not(#printArea){ display:none !important; }   /* the rest of the site takes no space, so no blank pages are printed */
     #printArea, #printArea *{ visibility:visible; }
-    #printArea{ display:block !important; position:absolute; left:0; top:0; width:100%; padding:20px; }
+    #printArea{ display:block !important; position:static; width:100%; padding:20px; }
     #printArea:has(.idcard-sheet){ padding:0; }
     #printArea .idcard-sheet{ page:cards; grid-template-columns:repeat(2,86mm); gap:2.5mm 4mm; justify-content:center; }
   }
@@ -4206,7 +4208,7 @@ function pgBankHTML(){
   const list = PG.bank.filter(q=>(!f.chapter||q.chapter===f.chapter)&&(!f.type||q.type===f.type)&&(!f.source||q.source===f.source));
   const cnt = t=>PG.bank.filter(q=>q.type===t).length;
   return `
-    <p class="note-inline" style="margin:0 0 12px;"><b>${PG.bank.length}</b> questions in bank for ${esc(PG.cls)} &mdash; ${esc(PG.subject)} (MCQ ${cnt('MCQ')}, Short ${cnt('Short')}, Long ${cnt('Long')}).</p>
+    <p class="note-inline" style="margin:0 0 12px;"><b>${PG.bank.length}</b> questions in bank for ${esc(PG.cls)} &mdash; ${esc(PG.subject)} (${PG_TYPES.map(t=>esc(t)+' '+cnt(t)).join(', ')}). ${PG.bank.length?'<button type="button" class="tag-btn danger" style="padding:3px 10px;font-size:12px;margin-left:8px;" onclick="pgClearBank()">Delete ALL questions of this subject</button>':''}</p>
     <div class="admin-block" style="background:#fff;">
       <h3 style="font-size:14px;">${e?'Edit Question':'Add a Question'}</h3>
       <div class="field"><label>Question (for MCQ put each option on a new line)</label><textarea id="pgqText" rows="3" dir="auto">${e?esc(e.text):''}</textarea></div>
@@ -4320,28 +4322,49 @@ function pgSecType(l){
   if(/short\s+questions?|short\s+answers?|brief(ly)?|answer\s+the\s+following|مختصر/.test(t)) return 'Short';
   return '';
 }
+function pgLeadType(l){
+  const t = (l||'').toLowerCase();
+  if(/fill\s+in\s+the\s+(missing|gaps?|blanks?)|complete\s+the\s+(sentences?|words?)|missing\s+letters?/.test(t)) return 'Fill';
+  return '';
+}
+function pgJoinLines(lines, loose){
+  let out = lines[0] || '';
+  for(let i=1;i<lines.length;i++){
+    const l = lines[i];
+    const item = /^(\(?[a-zA-Z]\)|[a-zA-Z][\.\)]\s|\d{1,2}[\.\)]\s)/.test(l) || (loose && /^[a-z]\s\S.{0,25}$/.test(l));
+    out += (item ? '\n' : ' ') + l;
+  }
+  return out;
+}
 function pgParse(text, source, onlyEx, chapterAll){
   const lines = text.split(/\r?\n/).map(l=>l.replace(/\s+/g,' ').trim()).filter(Boolean);
   const chapRe = /^((chapter|unit|lesson)\s*[:\-#.]?\s*\d+|باب|سبق)/i;
   const exRe = /^(exercises?|review\s+questions?|end\s+of\s+(the\s+)?chapter\s+questions?|questions?|additional\s+questions?|مشق|مشقیں|سوالات|تمرین)\s*[:\-–]?\s*\d*\.?\d*\s*$/i;
   const startRe = /^(?:Q\.?\s*\d+\s*[\.\):\-]?|Ex(?:ercise)?\.?\s*\d+(?:\.\d+)?\s*[\.\):\-]?|\d{1,3}\s*[\.\)]|\(\d{1,3}\)|\([ivxIVX]{1,4}\)|[ivxIVX]{1,4}\s*[\.\)])\s*/;
-  const ansRe = /^(?:ans(?:wer)?|solution|sol|جواب|حل)\s*[:\-–]\s*(.*)$/i;
+  const ansRe = /^(?:ans(?:wer)?|solution|sol|جواب|حل)\s*[:.\-–]\s*(.*)$/i;
   const out = []; let cur = null, chapter = '', inEx = !onlyEx, secType = '';
   const flush = ()=>{
     if(!cur) return;
     const joined = cur.lines.join(' ');
     const optsMcq = /(\(a\)|\ba\)|\bA[\.\)])\s.+(\(b\)|\bb\)|\bB[\.\)])\s/i.test(joined) || (cur.lines.length>=4 && cur.lines.slice(1).every(l=>/^\(?[a-dA-D][\)\.]/.test(l)));
+    const strongMcq = /(\(a\)|\ba\))\s.+(\(b\)|\bb\))\s/i.test(joined);
+    const lead = pgLeadType(cur.lines[0] || '');
     let type;
     if(cur.raw) type = 'Match';
+    else if(strongMcq) type = 'MCQ';
+    else if(lead) type = lead;
     else if(optsMcq) type = 'MCQ';
     else if(cur.sec) type = cur.sec;
     else if(/_{3,}|\.{5,}|…{2,}/.test(joined)) type = 'Fill';
     else type = (joined.length>170 || /\b(explain|describe|discuss|derive|prove|elaborate|write a note|compare)\b|تفصیل|وضاحت/i.test(joined)) ? 'Long' : 'Short';
-    const textOut = ((type==='MCQ' || type==='Match') ? cur.lines.join('\n') : joined).trim();
+    const textOut = ((type==='MCQ' || type==='Match') ? cur.lines.join('\n') : pgJoinLines(cur.lines, type==='Fill')).trim();
     if(textOut.length >= 12) out.push({ id:uid(), text:textOut.slice(0,1500), type, source, chapter:cur.chapter || chapterAll || '', marks:PG_DEFAULT_MARKS[type], answer:cur.ans.join('\n').trim().slice(0,3000), keep:true });
     cur = null;
   };
-  lines.forEach(l=>{
+  lines.forEach(line0=>{
+    let l = line0;
+    if(/^\d{1,3}$/.test(l)) return;                                  // a lone page number
+    l = l.replace(/([.?!؟"”'])\s+\d{1,3}$/, '$1');                   // a page number stuck to the end of a line
     if(chapRe.test(l) && l.length<90){ flush(); chapter = l; secType = ''; inEx = !onlyEx; return; }
     if(exRe.test(l)){ flush(); inEx = true; secType = ''; return; }
     if(!inEx) return;
@@ -4353,13 +4376,22 @@ function pgParse(text, source, onlyEx, chapterAll){
     }
     if(/^[A-Z]\s+(?:[A-Z][\w'’\-]*\s*){1,5}$/.test(l) || /^\d{1,2}\s+[A-Z][A-Za-z'’ ]{2,40}$/.test(l)){ flush(); secType = ''; return; }   // sub-heading like "B Oral Communication", "1 Phonics"
     if(cur && cur.raw){ cur.lines.push(l); return; }
+    const rawLine = l;
+    let inlineAns = null;
+    const im = l.match(/^(.*?[?.؟!\)])\s+ans(?:wer)?\s*[:.\-–]\s*(.+)$/i);        // "Question? Ans. the answer"
+    if(im && im[1].length >= 8){ l = im[1]; inlineAns = im[2]; }
     const am = l.match(ansRe);
     if(cur && am){ cur.inAns = true; if(am[1]) cur.ans.push(am[1]); return; }
     const m = l.match(startRe);
     const startsQ = !!(m && m[0].length && l.length > m[0].length);
-    if(cur && cur.inAns && !(startsQ && (/^Q\.?\s*\d+/i.test(l) || /[?؟]\s*$/.test(l) || /^\(?[ivxIVX]{1,4}\s*[\.\)]/.test(l)))){ cur.ans.push(l); return; }
+    if(startsQ && inlineAns===null){                                                    // "Question? The answer" with no "Ans" label
+      const qm = l.slice(m[0].length).match(/^(.*?\?)\s+([A-Z][^?]{2,})$/);
+      if(qm && !/^(give|write|name|list|explain|describe|use|tell|say|state|mention|draw|find|make|fill|complete|choose|match|read|look|identify|underline|circle|tick|put|rewrite|form|add|count|answer|why|what|how|where|when|who)\b/i.test(qm[2])){ l = l.slice(0, m[0].length) + qm[1]; inlineAns = qm[2]; }
+    }
+    if(cur && cur.inAns && !(startsQ && (/^Q\.?\s*\d+/i.test(l) || /[?؟]\s*$/.test(l) || /^\(?[ivxIVX]{1,4}\s*[\.\)]/.test(l)))){ cur.ans.push(rawLine); return; }
     if(startsQ){ flush(); cur = { lines:[l.slice(m[0].length).trim()], chapter, ans:[], inAns:false, sec:secType }; }
     else if(cur && cur.lines.join(' ').length < 1500){ cur.lines.push(l); }
+    if(inlineAns && cur){ cur.inAns = true; cur.ans.push(inlineAns); }
   });
   flush();
   return out;
@@ -5477,7 +5509,7 @@ async function pgOcrPages(){
       }
       st.innerHTML = `<p class="note-inline">Reading pages ${p}&ndash;${Math.min(p+2,last)} of ${from}&ndash;${last}&hellip; please wait.</p>`;
       const out = await pgClaude('You are an OCR engine. Output only the text that is printed on the page images.',
-        'Transcribe ALL the text on these page images exactly as printed, in reading order. Keep headings, question numbers such as Q.1, (i), (a), and keep each question on its own line. Do not summarise, translate, correct or add anything. Plain text only.', 8000, imgs);
+        'Transcribe ALL the text on these page images exactly as printed, in reading order. Keep headings, question numbers such as Q.1, (i), (a), and keep each question on its own line. If an answer is printed with a question, put it on the next line starting with Ans: . Leave out page numbers, running headers and footers. Do not summarise, translate, correct or add anything. Plain text only.', 8000, imgs);
       all += out.trim() + '\n';
       if(p+3 <= last) await new Promise(r=>setTimeout(r,4000));
     }
@@ -5486,6 +5518,15 @@ async function pgOcrPages(){
   }catch(e){ console.error(e); st.innerHTML = `<div class="msg-err">${esc(e.message||'Could not read these pages')}</div>`; }
 }
 
+
+async function pgClearBank(){
+  if(!pgOK() || !PG.bank.length) return;
+  if(!confirm('Delete ALL '+PG.bank.length+' questions of '+PG.cls+' / '+PG.subject+' from the bank? This cannot be undone.')) return;
+  PG.bank = []; PG.sel = {}; PG.editId = '';
+  await pgSaveBank();
+  pgSet('<div class="msg-ok">The question bank for this subject is now empty. Import again with the new version.</div>');
+  renderPaperGenerator();
+}
 </script>
 </body>
 </html>
