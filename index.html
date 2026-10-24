@@ -4153,25 +4153,26 @@ function pgUrBox(t, i, q, p){
   return pgSenior(p.cls) ? `<textarea rows="2" dir="rtl" placeholder="اردو ورژن (Urdu)" style="width:100%;margin-top:6px;padding:8px;border:1px solid var(--line);border-radius:6px;font-family:${PG_UR_FONT};font-size:14px;" oninput="PG.paper.sections['${t}'][${i}].textUr=this.value">${esc(q.textUr||'')}</textarea>` : '';
 }
 function pgRoman(i){ return ['i','ii','iii','iv','v','vi','vii','viii','ix','x','xi','xii','xiii','xiv','xv','xvi','xvii','xviii','xix','xx'][i] || String(i+1); }
+function pgPairHTML(inp, lab, ur, en, rows){
+  const U = 'font-family:'+PG_UR_FONT+';';
+  const f = (dir, ph, val, on, st) => rows>1
+    ? `<textarea rows="${rows}" dir="${dir}" placeholder="${ph}" style="${inp}${st}" oninput="${on}">${esc(val)}</textarea>`
+    : `<input dir="${dir}" placeholder="${ph}" style="${inp}${st}" value="${esc(val)}" oninput="${on}">`;
+  return `<div style="border:1px solid var(--line);border-radius:6px;padding:8px;margin-bottom:8px;background:#fff;">${lab?`<div style="font-weight:700;font-size:13px;margin-bottom:4px;">${lab}</div>`:''}${f('rtl','اردو (Urdu) — first',ur[0],ur[1],U)}<div style="height:4px;"></div>${f('auto','English — directly below',en[0],en[1],'')}</div>`;
+}
 function pgMcqBothHTML(inp){
-  const m = PG.add.mcq, U = 'font-family:'+PG_UR_FONT+';';
-  return `<p class="note-inline" style="margin:0 0 6px;">English on the left, the same MCQ in Urdu on the right.</p>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;">
-      <b>English</b><b dir="rtl" style="text-align:right;">اردو</b>
-      <textarea rows="2" dir="auto" placeholder="Question" style="${inp}" oninput="PG.add.mcq.q=this.value">${esc(m.q)}</textarea>
-      <textarea rows="2" dir="rtl" placeholder="سوال" style="${inp}${U}" oninput="PG.add.mcq.qu=this.value">${esc(m.qu)}</textarea>
-      ${[0,1,2,3].map(i=>`<input dir="auto" placeholder="(${'abcd'[i]})" style="${inp}" value="${esc(m.o[i])}" oninput="PG.add.mcq.o[${i}]=this.value"><input dir="rtl" placeholder="(${'abcd'[i]})" style="${inp}${U}" value="${esc(m.ou[i])}" oninput="PG.add.mcq.ou[${i}]=this.value">`).join('')}
-    </div>
+  const m = PG.add.mcq;
+  return `<p class="note-inline" style="margin:0 0 6px;">Write the Urdu line first and the English directly below it. In the printed paper they come side by side on one line (English on the left, Urdu on the right).</p>
+    ${pgPairHTML(inp, 'Question', [m.qu,'PG.add.mcq.qu=this.value'], [m.q,'PG.add.mcq.q=this.value'], 2)}
+    ${[0,1,2,3].map(i=>pgPairHTML(inp, 'Option ('+'abcd'[i]+')', [m.ou[i],`PG.add.mcq.ou[${i}]=this.value`], [m.o[i],`PG.add.mcq.o[${i}]=this.value`], 1)).join('')}
     <div class="field" style="margin-top:8px;"><label>Correct option (optional, used for the answer key)</label>
       <select style="padding:8px;border:1px solid var(--line);border-radius:6px;" onchange="PG.add.mcq.ans=this.value"><option value="">&mdash; not set &mdash;</option>${[0,1,2,3].map(i=>`<option value="${i}" ${m.ans===String(i)?'selected':''}>(${'abcd'[i]})</option>`).join('')}</select></div>
     <button type="button" class="btn-gold" onclick="pgAddMcq()">Add this MCQ</button>`;
 }
 function pgRowsBothHTML(k, inp){
-  const R = PG.add.rows[k], U = 'font-family:'+PG_UR_FONT+';';
-  return `<p class="note-inline" style="margin:0 0 6px;">Each row is one question: English on the left, the same question in Urdu on the right.${k==='Short'?' In the paper, short questions are printed as parts i), ii), iii)&hellip; under one question number.':''}</p>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;"><b>English</b><b dir="rtl" style="text-align:right;">اردو</b>
-      ${R.map((r,i)=>`<textarea rows="2" dir="auto" style="${inp}" oninput="PG.add.rows['${k}'][${i}].en=this.value">${esc(r.en)}</textarea><textarea rows="2" dir="rtl" style="${inp}${U}" oninput="PG.add.rows['${k}'][${i}].ur=this.value">${esc(r.ur)}</textarea>`).join('')}
-    </div>
+  const R = PG.add.rows[k];
+  return `<p class="note-inline" style="margin:0 0 6px;">Each box is one question: write the Urdu line first and the English directly below it. In the printed paper they come side by side on one line (English on the left, Urdu on the right).</p>
+    ${R.map((r,i)=>pgPairHTML(inp, (i+1)+'.', [r.ur,`PG.add.rows['${k}'][${i}].ur=this.value`], [r.en,`PG.add.rows['${k}'][${i}].en=this.value`], 2)).join('')}
     <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;"><button type="button" class="tag-btn" onclick="PG.add.rows['${k}'].push({en:'',ur:''});pgRenderBody()">+ Add a row</button><button type="button" class="btn-gold" onclick="pgAddRows('${k}')">Save these questions</button></div>`;
 }
 async function pgAddRows(k){
