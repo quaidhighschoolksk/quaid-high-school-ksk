@@ -3527,6 +3527,7 @@ function feeTotalsHTML(sm, earlier){
 async function renderFeeBlock(){
   const el = document.getElementById('feeBlock'); if(!el || !isAdmin) return;
   await feeLoad();
+  if(typeof QRCode === 'undefined') await ensureQRCodeLib();
   const ens = DB.enrollments.filter(e=>e.session===FEE.session && e.className===FEE.cls)
     .sort((a,b)=>String(a.rollNo).localeCompare(String(b.rollNo), undefined, {numeric:true}));
   const stu = DB.students.find(x=>x.id===FEE.sid);
@@ -3547,12 +3548,16 @@ async function renderFeeBlock(){
       <div class="row-2"><div class="field"><label>Type</label><select id="feeType">${FEE_TYPES.map(t=>`<option>${t}</option>`).join('')}</select></div><div class="field"><label>Details (optional, e.g. Jan, Math copy)</label><input id="feeTitle"></div></div>
       <div class="row-2"><div class="field"><label>Amount (Rs.)</label><input id="feeAmt" type="number" min="0"></div><div class="field"><label>Date</label><input id="feeDate" type="date" value="${new Date().toISOString().slice(0,10)}"></div></div>
       <button type="button" class="btn-gold" onclick="feeAdd()">Add</button>
+      <h4 style="margin:16px 0 6px;">Fee Card preview (with QR)</h4>
+      ${feeCardHTML(stu, FEE.session)}
     </div>`;
   }
   el.innerHTML = `<h3>Fee Cards (QR)</h3>
     <p class="note-inline" style="margin:-6px 0 14px;">Add what a student owes (monthly fee, books, copies, diary&hellip;) and each payment received. Print the Fee Card with its QR, then scan it in the scanner above. The QR holds only the student ID, so the amounts cannot be read from the card itself.</p>
     <div class="row-2"><div class="field"><label>Session / Year</label><input id="feeSession" value="${esc(FEE.session)}" onchange="FEE.session=this.value.trim();FEE.sid='';renderFeeBlock()"></div>
     <div class="field"><label>Class</label><select id="feeClass" onchange="FEE.cls=this.value;FEE.sid='';renderFeeBlock()">${classOptionsHTML(FEE.cls)}</select></div></div>
+    <div style="margin:10px 0;display:flex;gap:8px;flex-wrap:wrap;">${FEE.cls && ens.length ? `<button type="button" class="btn-gold" onclick="feePrintAll(false)">Print all fee cards &mdash; ${esc(FEE.cls)} (${ens.length})</button><button type="button" class="tag-btn" onclick="feeDownloadAll(false)">Download PDF &mdash; ${esc(FEE.cls)}</button>` : ''}<button type="button" class="tag-btn" onclick="feePrintAll(true)">Print ALL classes</button><button type="button" class="tag-btn" onclick="feeDownloadAll(true)">Download PDF &mdash; ALL classes</button></div>
+    <div id="feeBulkStatus"></div>
     ${list}${panel}`;
 }
 async function feeAdd(){
@@ -3573,21 +3578,69 @@ async function feeDel(id){
   if(!confirm('Delete this fee record?')) return;
   DB.feeRecords = DB.feeRecords.filter(r=>r.id!==id); await feeSave(); renderFeeBlock();
 }
-async function feePrintCard(){
-  const stu = DB.students.find(x=>x.id===FEE.sid); if(!stu) return;
-  if(typeof QRCode === 'undefined') await ensureQRCodeLib();
-  const en = DB.enrollments.find(e=>e.studentId===stu.id && e.session===FEE.session);
-  const rows = feeRows(stu.id, FEE.session), sm = feeSum(rows), ea = feeEarlier(stu.id, FEE.session);
+function feeCardHTML(stu, session){
+  const en = DB.enrollments.find(e=>e.studentId===stu.id && e.session===session);
+  const rows = feeRows(stu.id, session), sm = feeSum(rows), ea = feeEarlier(stu.id, session);
   const qr = qrDataUrl(feeQRText(stu), 220);
-  printHTML(`<div style="font-family:Arial,sans-serif;color:#000;max-width:600px;margin:0 auto;border:1.5px solid #000;padding:14px;">
-    <div style="display:flex;align-items:center;gap:10px;border-bottom:2px solid #000;padding-bottom:8px;margin-bottom:8px;"><img src="${SCHOOL_LOGO}" alt="" style="height:46px;"><div><b style="font-size:16px;">Quaid High School KSK</b><div style="font-size:12px;">Fee Card &middot; Session ${esc(FEE.session)}</div></div></div>
+  return `<div style="font-family:Arial,sans-serif;color:#000;max-width:600px;margin:0 auto;border:1.5px solid #000;padding:14px;background:#fff;">
+    <div style="display:flex;align-items:center;gap:10px;border-bottom:2px solid #000;padding-bottom:8px;margin-bottom:8px;"><img src="${SCHOOL_LOGO}" alt="" style="height:46px;"><div><b style="font-size:16px;">Quaid High School KSK</b><div style="font-size:12px;">Fee Card &middot; Session ${esc(session)}</div></div></div>
     <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:8px;">
-      <div style="font-size:13px;line-height:1.6;"><b>Name:</b> ${esc(stu.name)}<br><b>Father:</b> ${esc(stu.fatherName||'')}<br><b>Class:</b> ${esc(FEE.cls)} &nbsp; <b>Roll No:</b> ${esc(en?en.rollNo:'')}</div>
-      <div style="text-align:center;">${qr?`<img src="${qr}" alt="QR" style="width:26mm;height:26mm;">`:''}<div style="font-size:9px;">Scan: office use only</div></div>
+      <div style="font-size:13px;line-height:1.6;"><b>Name:</b> ${esc(stu.name)}<br><b>Father:</b> ${esc(stu.fatherName||'')}<br><b>Class:</b> ${esc(en?en.className:'')} &nbsp; <b>Roll No:</b> ${esc(en?en.rollNo:'')}</div>
+      <div style="text-align:center;">${qr?`<img src="${qr}" alt="QR" style="width:26mm;height:26mm;">`:'<div style="width:26mm;height:26mm;border:1px dashed #888;font-size:9px;display:flex;align-items:center;justify-content:center;">QR not available</div>'}<div style="font-size:9px;">Scan: office use only</div></div>
     </div>
     ${feeTableHTML(rows, false, true)}
     <p style="font-size:13px;margin:8px 0 0;"><b>Total:</b> ${rs(sm.total)} &nbsp; <b>Paid:</b> ${rs(sm.paid)} &nbsp; <b>Pending:</b> ${rs(sm.pending)}${ea>0?' &nbsp; <b>Earlier pending:</b> '+rs(ea):''}</p>
-  </div>`);
+  </div>`;
+}
+async function feePrintCard(){
+  const stu = DB.students.find(x=>x.id===FEE.sid); if(!stu) return;
+  if(typeof QRCode === 'undefined') await ensureQRCodeLib();
+  printHTML(feeCardHTML(stu, FEE.session));
+}
+function feeBulkList(all){
+  return DB.enrollments.filter(e=>e.session===FEE.session && (all || e.className===FEE.cls))
+    .sort((x,y)=>String(x.className).localeCompare(String(y.className)) || String(x.rollNo).localeCompare(String(y.rollNo), undefined, {numeric:true}))
+    .map(e=>DB.students.find(x=>x.id===e.studentId)).filter(Boolean);
+}
+async function feePrintAll(all){
+  await feeLoad();
+  if(typeof QRCode === 'undefined') await ensureQRCodeLib();
+  const list = feeBulkList(all); if(!list.length) return;
+  printHTML(list.map(st=>`<div style="page-break-inside:avoid;margin-bottom:8mm;">${feeCardHTML(st, FEE.session)}</div>`).join(''));
+}
+async function feeDownloadAll(all){
+  await feeLoad();
+  const st = document.getElementById('feeBulkStatus'), list = feeBulkList(all);
+  if(!list.length){ if(st) st.innerHTML = '<div class="msg-err">No students to make fee cards for.</div>'; return; }
+  if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){ if(st) st.innerHTML = '<div class="msg-err">Download tools did not load (check the internet connection) and try again.</div>'; return; }
+  if(typeof QRCode === 'undefined') await ensureQRCodeLib();
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+  let y = 10, first = true;
+  try{
+    for(let i=0; i<list.length; i++){
+      if(st) st.innerHTML = '<p class="note-inline">Preparing PDF&hellip; ' + (i+1) + ' of ' + list.length + '</p>';
+      await new Promise(r=>setTimeout(r,20));
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;left:-10000px;top:0;width:190mm;background:#fff;padding:2mm;box-sizing:border-box;';
+      host.innerHTML = feeCardHTML(list[i], FEE.session);
+      document.body.appendChild(host);
+      try{
+        const cv = await html2canvas(host, { scale:2, backgroundColor:'#ffffff', useCORS:true });
+        let w = 190, h = cv.height / cv.width * 190;
+        if(h > 277){ w = w * 277 / h; h = 277; }
+        if(!first && y + h > 287){ pdf.addPage('a4','portrait'); y = 10; }
+        pdf.addImage(cv.toDataURL('image/jpeg', 0.95), 'JPEG', 10, y, w, h);
+        y += h + 6; first = false;
+      } finally { host.remove(); }
+    }
+    const name = 'Fee-Cards-' + FEE.session + (all ? '-All-Classes' : '-' + FEE.cls) + '.pdf';
+    pdf.save(name);
+    if(st) st.innerHTML = '<p class="note-inline">Done &mdash; ' + list.length + ' fee cards saved as ' + esc(name) + '</p>';
+  }catch(err){
+    console.error(err);
+    if(st) st.innerHTML = '<div class="msg-err">Could not create the PDF, please try again.</div>';
+  }
 }
 
 function feeShowScan(txt){
