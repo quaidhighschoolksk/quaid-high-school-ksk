@@ -3500,7 +3500,36 @@ async function downloadCardsPDF(allClasses){
    "QHSKSK-FEE:" + student id, never any amounts, and is read by the
    admin-only scanner (the ID card QR works there too). */
 const FEE_TYPES = ['Monthly Fee','Admission Fee','Exam Fee','Books','Copies','Diary','Other'];
-const FEE = { session: String(new Date().getFullYear()), cls:'', sid:'' };
+const FEE = { session: String(new Date().getFullYear()), cls:'', sid:'', form:null, formSid:'' };
+const FEE_ITEMS = ['Admission Fee','Exam Fee','Books','Copies','Diary','Other'];
+const FEE_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+function feeNewForm(){ return { on:{}, amt:{}, det:{}, mon:{}, mAmt:'' }; }
+FEE.form = feeNewForm();
+function feeTick(key, on){
+  FEE.form.on[key] = on;
+  const el = document.getElementById('feeOpen_' + key); if(el) el.style.display = on ? 'block' : 'none';
+}
+function feeFormHTML(stu){
+  const F = FEE.form, ck = 'style="width:auto;"';
+  const have = {}; feeRows(stu.id, FEE.session).filter(r=>r.type==='Monthly Fee').forEach(r=>{ have[r.title] = true; });
+  const box = (key, label, inner) => `<div style="border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin-bottom:6px;background:#fff;">
+    <label style="display:flex;gap:8px;align-items:center;font-weight:600;margin:0;"><input type="checkbox" ${ck} ${F.on[key]?'checked':''} onchange="feeTick('${key}',this.checked)"> ${label}</label>
+    <div id="feeOpen_${key}" style="display:${F.on[key]?'block':'none'};margin-top:8px;">${inner}</div></div>`;
+  const months = box('months', 'Monthly Fee (tick the months)', `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:4px 10px;margin-bottom:8px;">${FEE_MONTHS.map(m=>`<label style="display:flex;gap:6px;align-items:center;font-weight:400;margin:0;"><input type="checkbox" ${ck} ${have[m]?'disabled checked':(F.mon[m]?'checked':'')} onchange="FEE.form.mon['${m}']=this.checked"> ${m}${have[m]?' (added)':''}</label>`).join('')}</div>
+      <div class="field" style="margin:0;"><label>Amount for each ticked month (Rs.)</label><input type="number" min="0" value="${esc(F.mAmt)}" oninput="FEE.form.mAmt=this.value"></div>`);
+  const items = FEE_ITEMS.map((t,i)=>box('i'+i, t, `<div class="row-2"><div class="field" style="margin:0;"><label>Amount (Rs.)</label><input type="number" min="0" value="${esc(F.amt['i'+i]||'')}" oninput="FEE.form.amt['i${i}']=this.value"></div><div class="field" style="margin:0;"><label>Details (optional${t==='Copies'||t==='Books'?', e.g. Math':''})</label><input value="${esc(F.det['i'+i]||'')}" oninput="FEE.form.det['i${i}']=this.value"></div></div>`)).join('');
+  return months + items;
+}
+async function feeAddTicked(){
+  if(!FEE.sid) return;
+  const F = FEE.form, add = [];
+  FEE_ITEMS.forEach((t,i)=>{ const k = 'i'+i; if(F.on[k]){ const a = parseFloat(F.amt[k]); if(a>0) add.push({ type:t, title:(F.det[k]||'').trim(), amount:a }); } });
+  if(F.on.months){ const a = parseFloat(F.mAmt); FEE_MONTHS.forEach(m=>{ if(F.mon[m] && a>0) add.push({ type:'Monthly Fee', title:m, amount:a }); }); }
+  if(!add.length){ alert('Tick at least one item (or month) and enter its amount.'); return; }
+  const date = document.getElementById('feeDate').value || new Date().toISOString().slice(0,10);
+  add.forEach(x=>DB.feeRecords.push({ id:uid(), studentId:FEE.sid, session:FEE.session, type:x.type, title:x.title, amount:x.amount, date, payments:[] }));
+  FEE.form = feeNewForm(); await feeSave(); renderFeeBlock();
+}
 let feeStream = null, feeTimer = null, feeDet = null;
 function feeQRText(stu){ return 'QHSKSK-FEE:' + stu.id; }
 function rs(n){ return 'Rs. ' + (+n||0).toLocaleString('en-US'); }
@@ -3527,6 +3556,7 @@ function feeTotalsHTML(sm, earlier){
 async function renderFeeBlock(){
   const el = document.getElementById('feeBlock'); if(!el || !isAdmin) return;
   await feeLoad();
+  if(FEE.formSid !== FEE.sid){ FEE.form = feeNewForm(); FEE.formSid = FEE.sid; }
   if(typeof QRCode === 'undefined') await ensureQRCodeLib();
   const ens = DB.enrollments.filter(e=>e.session===FEE.session && e.className===FEE.cls)
     .sort((a,b)=>String(a.rollNo).localeCompare(String(b.rollNo), undefined, {numeric:true}));
@@ -3544,10 +3574,10 @@ async function renderFeeBlock(){
       <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;"><b>${esc(stu.name)}</b><span>s/o ${esc(stu.fatherName||'')} &middot; Roll ${esc(en?en.rollNo:'-')} &middot; ${esc(FEE.cls)}</span><button type="button" class="btn-gold" onclick="feePrintCard()">Print Fee Card</button></div>
       ${feeTotalsHTML(feeSum(rows), feeEarlier(stu.id, FEE.session))}
       ${feeTableHTML(rows, true)}
-      <h4 style="margin:14px 0 6px;">Add a fee / charge</h4>
-      <div class="row-2"><div class="field"><label>Type</label><select id="feeType">${FEE_TYPES.map(t=>`<option>${t}</option>`).join('')}</select></div><div class="field"><label>Details (optional, e.g. Jan, Math copy)</label><input id="feeTitle"></div></div>
-      <div class="row-2"><div class="field"><label>Amount (Rs.)</label><input id="feeAmt" type="number" min="0"></div><div class="field"><label>Date</label><input id="feeDate" type="date" value="${new Date().toISOString().slice(0,10)}"></div></div>
-      <button type="button" class="btn-gold" onclick="feeAdd()">Add</button>
+      <h4 style="margin:14px 0 6px;">Add fees (tick what applies)</h4>
+      ${feeFormHTML(stu)}
+      <div class="field" style="max-width:220px;"><label>Date</label><input id="feeDate" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+      <button type="button" class="btn-gold" onclick="feeAddTicked()">Add ticked fees</button>
       <h4 style="margin:16px 0 6px;">Fee Card preview (with QR)</h4>
       ${feeCardHTML(stu, FEE.session)}
     </div>`;
@@ -3559,12 +3589,6 @@ async function renderFeeBlock(){
     <div style="margin:10px 0;display:flex;gap:8px;flex-wrap:wrap;">${FEE.cls && ens.length ? `<button type="button" class="btn-gold" onclick="feePrintAll(false)">Print all fee cards &mdash; ${esc(FEE.cls)} (${ens.length})</button><button type="button" class="tag-btn" onclick="feeDownloadAll(false)">Download PDF &mdash; ${esc(FEE.cls)}</button>` : ''}<button type="button" class="tag-btn" onclick="feePrintAll(true)">Print ALL classes</button><button type="button" class="tag-btn" onclick="feeDownloadAll(true)">Download PDF &mdash; ALL classes</button></div>
     <div id="feeBulkStatus"></div>
     ${list}${panel}`;
-}
-async function feeAdd(){
-  const amt = parseFloat(document.getElementById('feeAmt').value);
-  if(!(amt>0) || !FEE.sid) return;
-  DB.feeRecords.push({ id:uid(), studentId:FEE.sid, session:FEE.session, type:document.getElementById('feeType').value, title:document.getElementById('feeTitle').value.trim(), amount:amt, date:document.getElementById('feeDate').value || new Date().toISOString().slice(0,10), payments:[] });
-  await feeSave(); renderFeeBlock();
 }
 async function feePay(id){
   const r = DB.feeRecords.find(x=>x.id===id); if(!r) return;
@@ -3613,6 +3637,7 @@ async function feeDownloadAll(all){
   const st = document.getElementById('feeBulkStatus'), list = feeBulkList(all);
   if(!list.length){ if(st) st.innerHTML = '<div class="msg-err">No students to make fee cards for.</div>'; return; }
   if(typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined'){ if(st) st.innerHTML = '<div class="msg-err">Download tools did not load (check the internet connection) and try again.</div>'; return; }
+
   if(typeof QRCode === 'undefined') await ensureQRCodeLib();
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
