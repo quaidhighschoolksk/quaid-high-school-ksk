@@ -864,7 +864,7 @@ async function downloadElementAsPDF(elementId, filename, statusElId){
   }
 }
 
-let DB = { notifications:[], students:[], admissions:[], datesheet:[], results:[], enrollments:[], classSubjects:{}, aboutUs:[], complaints:[], studentAccounts:{}, academicCalendar:[], notes:[], pairingSchemes:[], attendance:[], inoutDays:{} };
+let DB = { notifications:[], students:[], admissions:[], datesheet:[], results:[], enrollments:[], classSubjects:{}, aboutUs:[], complaints:[], studentAccounts:{}, academicCalendar:[], notes:[], pairingSchemes:[], attendance:[], inoutDays:{}, feeRecords:[] };
 let calSessionFilter = 'All';
 let isAdmin = false;
 let dsClassFilter = 'All';
@@ -1986,6 +1986,7 @@ let auPhotoDraft = ''; // base64 for the About Us form currently being filled
 function renderAdminPanel(){
   if(!isAdmin) return;
   if(typeof stopInOutScanner==='function') stopInOutScanner();
+  if(typeof stopFeeScanner==='function') stopFeeScanner();
   const wrap = document.getElementById('adminPanelWrap');
   wrap.innerHTML = `
     <div class="toolbar">
@@ -2463,10 +2464,20 @@ function renderAdminPanel(){
       })()}
     </div>
 
+    <div class="admin-block" id="feeScanBlock">
+      <h3>Fee Card Scanner (QR)</h3>
+      <p class="note-inline" style="margin:-6px 0 14px;">Admin only. Scan a student's Fee Card (or ID card) QR to see paid dues, pending dues, the total and the books / copies / diary records.</p>
+      <video id="feeVideo" playsinline muted style="display:none;width:100%;max-width:360px;border-radius:8px;margin-bottom:8px;"></video>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;"><button type="button" class="btn-gold" onclick="feeScanStart()">Start Camera</button><button type="button" class="tag-btn" onclick="stopFeeScanner()">Stop Camera</button></div>
+      <div id="feeScanStatus"></div>
+      <div id="feeScanResult"></div>
+    </div>
+    <div class="admin-block" id="feeBlock"></div>
     <div class="admin-block" id="paperGenBlock"></div>
   `;
   renderInOutRecords();
   renderCardsPreview();
+  renderFeeBlock();
   renderPaperGenerator();
 
   document.getElementById('aboutUsForm').addEventListener('submit', async e=>{
@@ -3481,6 +3492,145 @@ async function downloadCardsPDF(allClasses){
     console.error(err);
     if(st) st.innerHTML = '<div class="msg-err">Could not create the PDF, please try again.</div>';
   }
+}
+
+/* ---------------- FEE CARDS + QR (admin only) ----------------
+   DB.feeRecords: one row per charge { studentId, session, type, title,
+   amount, date, payments:[{amt,date}] }. The fee card QR holds only
+   "QHSKSK-FEE:" + student id, never any amounts, and is read by the
+   admin-only scanner (the ID card QR works there too). */
+const FEE_TYPES = ['Monthly Fee','Admission Fee','Exam Fee','Books','Copies','Diary','Other'];
+const FEE = { session: String(new Date().getFullYear()), cls:'', sid:'' };
+let feeStream = null, feeTimer = null, feeDet = null;
+function feeQRText(stu){ return 'QHSKSK-FEE:' + stu.id; }
+function rs(n){ return 'Rs. ' + (+n||0).toLocaleString('en-US'); }
+function feePaid(r){ return (r.payments||[]).reduce((a,p)=>a+(+p.amt||0),0); }
+function feeSum(rows){ const t = rows.reduce((a,r)=>a+(+r.amount||0),0), p = rows.reduce((a,r)=>a+feePaid(r),0); return { total:t, paid:p, pending:t-p }; }
+function feeRows(sid, session){ return DB.feeRecords.filter(r=>r.studentId===sid && r.session===session); }
+function feeEarlier(sid, session){ return feeSum(DB.feeRecords.filter(r=>r.studentId===sid && r.session!==session)).pending; }
+async function feeSave(){ await setData('feeRecords', DB.feeRecords); }
+async function feeLoad(){ if(!DB._feeLoaded){ DB.feeRecords = await getData('feeRecords', []); DB._feeLoaded = true; } }
+
+function feeTableHTML(rows, edit, print){
+  if(!rows.length) return '<div class="empty">No fee records yet.</div>';
+  const ta = print ? 'border="1" cellpadding="4" style="border-collapse:collapse;width:100%;font-size:12px;"' : '';
+  return `<table ${ta}><tr><th>Date</th><th>Item</th><th>Amount</th><th>Paid</th><th>Pending</th>${edit?'<th></th>':''}</tr>${rows.map(r=>{
+    const p = feePaid(r), d = (+r.amount||0) - p;
+    return `<tr><td class="mono">${esc(fmtDate(r.date))}</td><td>${esc(r.type)}${r.title?' &mdash; '+esc(r.title):''}</td><td class="mono">${rs(r.amount)}</td><td class="mono">${rs(p)}</td><td class="mono" style="${d>0?'color:#b00020;font-weight:700;':''}">${rs(d)}</td>${edit?`<td style="white-space:nowrap;"><button type="button" class="tag-btn" onclick="feePay('${r.id}')">+ Payment</button> <button type="button" class="tag-btn danger" onclick="feeDel('${r.id}')">Delete</button></td>`:''}</tr>`;
+  }).join('')}</table>`;
+}
+function feeTotalsHTML(sm, earlier){
+  const b = (l,v,c) => `<div style="flex:1;min-width:110px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;"><div style="font-size:12px;color:var(--muted);">${l}</div><div style="font-weight:700;font-size:17px;${c||''}">${rs(v)}</div></div>`;
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;">${b('Total',sm.total)}${b('Paid',sm.paid,'color:#1a7f37;')}${b('Pending',sm.pending,sm.pending>0?'color:#b00020;':'')}${earlier>0?b('Earlier sessions pending',earlier,'color:#b00020;'):''}</div>`;
+}
+
+async function renderFeeBlock(){
+  const el = document.getElementById('feeBlock'); if(!el || !isAdmin) return;
+  await feeLoad();
+  const ens = DB.enrollments.filter(e=>e.session===FEE.session && e.className===FEE.cls)
+    .sort((a,b)=>String(a.rollNo).localeCompare(String(b.rollNo), undefined, {numeric:true}));
+  const stu = DB.students.find(x=>x.id===FEE.sid);
+  const en = stu ? DB.enrollments.find(e=>e.studentId===stu.id && e.session===FEE.session) : null;
+  const list = ens.length ? `<table><tr><th>Roll</th><th>Name</th><th>Total</th><th>Paid</th><th>Pending</th><th></th></tr>${ens.map(e=>{
+      const st = DB.students.find(x=>x.id===e.studentId); if(!st) return '';
+      const sm = feeSum(feeRows(st.id, FEE.session));
+      return `<tr><td class="mono">${esc(e.rollNo)}</td><td>${esc(st.name)}</td><td class="mono">${rs(sm.total)}</td><td class="mono">${rs(sm.paid)}</td><td class="mono" style="${sm.pending>0?'color:#b00020;font-weight:700;':''}">${rs(sm.pending)}</td><td><button type="button" class="tag-btn" onclick="FEE.sid='${st.id}';renderFeeBlock()">Open</button></td></tr>`;
+    }).join('')}</table>` : (FEE.cls ? '<div class="empty">No students enrolled in this class for this session.</div>' : '<div class="empty">Pick a class to see its students.</div>');
+  let panel = '';
+  if(stu){
+    const rows = feeRows(stu.id, FEE.session);
+    panel = `<div style="border:1px solid var(--line);border-radius:8px;padding:12px;margin-top:14px;">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;"><b>${esc(stu.name)}</b><span>s/o ${esc(stu.fatherName||'')} &middot; Roll ${esc(en?en.rollNo:'-')} &middot; ${esc(FEE.cls)}</span><button type="button" class="btn-gold" onclick="feePrintCard()">Print Fee Card</button></div>
+      ${feeTotalsHTML(feeSum(rows), feeEarlier(stu.id, FEE.session))}
+      ${feeTableHTML(rows, true)}
+      <h4 style="margin:14px 0 6px;">Add a fee / charge</h4>
+      <div class="row-2"><div class="field"><label>Type</label><select id="feeType">${FEE_TYPES.map(t=>`<option>${t}</option>`).join('')}</select></div><div class="field"><label>Details (optional, e.g. Jan, Math copy)</label><input id="feeTitle"></div></div>
+      <div class="row-2"><div class="field"><label>Amount (Rs.)</label><input id="feeAmt" type="number" min="0"></div><div class="field"><label>Date</label><input id="feeDate" type="date" value="${new Date().toISOString().slice(0,10)}"></div></div>
+      <button type="button" class="btn-gold" onclick="feeAdd()">Add</button>
+    </div>`;
+  }
+  el.innerHTML = `<h3>Fee Cards (QR)</h3>
+    <p class="note-inline" style="margin:-6px 0 14px;">Add what a student owes (monthly fee, books, copies, diary&hellip;) and each payment received. Print the Fee Card with its QR, then scan it in the scanner above. The QR holds only the student ID, so the amounts cannot be read from the card itself.</p>
+    <div class="row-2"><div class="field"><label>Session / Year</label><input id="feeSession" value="${esc(FEE.session)}" onchange="FEE.session=this.value.trim();FEE.sid='';renderFeeBlock()"></div>
+    <div class="field"><label>Class</label><select id="feeClass" onchange="FEE.cls=this.value;FEE.sid='';renderFeeBlock()">${classOptionsHTML(FEE.cls)}</select></div></div>
+    ${list}${panel}`;
+}
+async function feeAdd(){
+  const amt = parseFloat(document.getElementById('feeAmt').value);
+  if(!(amt>0) || !FEE.sid) return;
+  DB.feeRecords.push({ id:uid(), studentId:FEE.sid, session:FEE.session, type:document.getElementById('feeType').value, title:document.getElementById('feeTitle').value.trim(), amount:amt, date:document.getElementById('feeDate').value || new Date().toISOString().slice(0,10), payments:[] });
+  await feeSave(); renderFeeBlock();
+}
+async function feePay(id){
+  const r = DB.feeRecords.find(x=>x.id===id); if(!r) return;
+  const left = (+r.amount||0) - feePaid(r);
+  const a = parseFloat(prompt('Amount received (pending '+left+')', left)); if(!(a>0)) return;
+  const d = prompt('Payment date (YYYY-MM-DD)', new Date().toISOString().slice(0,10));
+  (r.payments = r.payments || []).push({ id:uid(), amt:a, date:d || new Date().toISOString().slice(0,10) });
+  await feeSave(); renderFeeBlock();
+}
+async function feeDel(id){
+  if(!confirm('Delete this fee record?')) return;
+  DB.feeRecords = DB.feeRecords.filter(r=>r.id!==id); await feeSave(); renderFeeBlock();
+}
+async function feePrintCard(){
+  const stu = DB.students.find(x=>x.id===FEE.sid); if(!stu) return;
+  if(typeof QRCode === 'undefined') await ensureQRCodeLib();
+  const en = DB.enrollments.find(e=>e.studentId===stu.id && e.session===FEE.session);
+  const rows = feeRows(stu.id, FEE.session), sm = feeSum(rows), ea = feeEarlier(stu.id, FEE.session);
+  const qr = qrDataUrl(feeQRText(stu), 220);
+  printHTML(`<div style="font-family:Arial,sans-serif;color:#000;max-width:600px;margin:0 auto;border:1.5px solid #000;padding:14px;">
+    <div style="display:flex;align-items:center;gap:10px;border-bottom:2px solid #000;padding-bottom:8px;margin-bottom:8px;"><img src="${SCHOOL_LOGO}" alt="" style="height:46px;"><div><b style="font-size:16px;">Quaid High School KSK</b><div style="font-size:12px;">Fee Card &middot; Session ${esc(FEE.session)}</div></div></div>
+    <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:8px;">
+      <div style="font-size:13px;line-height:1.6;"><b>Name:</b> ${esc(stu.name)}<br><b>Father:</b> ${esc(stu.fatherName||'')}<br><b>Class:</b> ${esc(FEE.cls)} &nbsp; <b>Roll No:</b> ${esc(en?en.rollNo:'')}</div>
+      <div style="text-align:center;">${qr?`<img src="${qr}" alt="QR" style="width:26mm;height:26mm;">`:''}<div style="font-size:9px;">Scan: office use only</div></div>
+    </div>
+    ${feeTableHTML(rows, false, true)}
+    <p style="font-size:13px;margin:8px 0 0;"><b>Total:</b> ${rs(sm.total)} &nbsp; <b>Paid:</b> ${rs(sm.paid)} &nbsp; <b>Pending:</b> ${rs(sm.pending)}${ea>0?' &nbsp; <b>Earlier pending:</b> '+rs(ea):''}</p>
+  </div>`);
+}
+
+function feeShowScan(txt){
+  const out = document.getElementById('feeScanResult'); if(!out) return;
+  const m = String(txt).match(/^QHSKSK-FEE:(.+)$/) || String(txt).match(/^QHSKSK:([^:]+):/);
+  const stu = m ? DB.students.find(x=>x.id===m[1]) : null;
+  if(!stu){ out.innerHTML = '<div class="msg-err">This QR is not a school card or the student was not found.</div>'; return; }
+  const en = latestEnrollmentFor(stu.id), session = en ? en.session : FEE.session;
+  const rows = feeRows(stu.id, session);
+  out.innerHTML = `<div style="border:1px solid var(--line);border-radius:8px;padding:12px;margin-top:10px;background:#fff;">
+    <b>${esc(stu.name)}</b> s/o ${esc(stu.fatherName||'')} &middot; ${en?esc(en.className)+' &middot; Roll '+esc(en.rollNo)+' &middot; ':''}Session ${esc(session)}
+    ${feeTotalsHTML(feeSum(rows), feeEarlier(stu.id, session))}
+    ${feeTableHTML(rows, false)}
+    ${en?`<div style="margin-top:8px;"><button type="button" class="tag-btn" onclick="FEE.session='${esc(session)}';FEE.cls='${esc(en.className)}';FEE.sid='${stu.id}';renderFeeBlock();document.getElementById('feeBlock').scrollIntoView({behavior:'smooth'})">Open in Fee Cards</button></div>`:''}
+  </div>`;
+}
+async function feeScanStart(){
+  await feeLoad();
+  const st = document.getElementById('feeScanStatus'), v = document.getElementById('feeVideo');
+  stopFeeScanner();
+  try{ feeStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } }); }
+  catch(e){ st.innerHTML = '<div class="msg-err">Camera could not start. Allow camera permission and try again.</div>'; return; }
+  v.srcObject = feeStream; v.style.display = 'block'; try{ await v.play(); }catch(e){}
+  feeDet = null;
+  if('BarcodeDetector' in window){ try{ feeDet = new BarcodeDetector({ formats:['qr_code'] }); }catch(e){} }
+  if(!feeDet) await ensureJsQR();
+  st.innerHTML = '<p class="note-inline">Camera on &mdash; hold the fee card QR in front of it.</p>';
+  const cv = document.createElement('canvas'); let busy = false, last = '';
+  feeTimer = setInterval(async ()=>{
+    if(busy || !v.videoWidth) return; busy = true;
+    try{
+      let txt = null;
+      if(feeDet){ const r = await feeDet.detect(v); if(r && r.length) txt = r[0].rawValue; }
+      else if(typeof jsQR !== 'undefined'){ cv.width = v.videoWidth; cv.height = v.videoHeight; const c = cv.getContext('2d'); c.drawImage(v,0,0); const im = c.getImageData(0,0,cv.width,cv.height); const code = jsQR(im.data, im.width, im.height); if(code) txt = code.data; }
+      if(txt && txt !== last){ last = txt; feeShowScan(txt); } else if(!txt) last = '';
+    }catch(e){}
+    busy = false;
+  }, 400);
+}
+function stopFeeScanner(){
+  if(feeTimer){ clearInterval(feeTimer); feeTimer = null; }
+  if(feeStream){ feeStream.getTracks().forEach(t=>t.stop()); feeStream = null; }
+  const v = document.getElementById('feeVideo'); if(v){ v.srcObject = null; v.style.display = 'none'; }
 }
 
 /* ---------------- IN / OUT SCANNER (QR + face, camera stays on) ----------------
