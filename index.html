@@ -346,6 +346,11 @@
     <div class="section-title"><span class="num">01</span><h2>Latest Notifications</h2></div>
     <div id="homeNoticesPreview"></div>
 
+    <div class="section-title"><span class="num">01A</span><h2>Today&rsquo;s Diary</h2></div>
+    <p class="section-sub">Today&rsquo;s homework and diary, class by class. Parents and students can see earlier days, weeks and months after logging in to the Student Portal above.</p>
+    <div class="filter-chips" id="homeDiaryChips"></div>
+    <div id="homeDiaryWrap" style="margin-bottom:24px;"></div>
+
     <div class="card-grid">
       <div class="quick-card">
         <div class="badge">A</div>
@@ -364,6 +369,12 @@
         <h3>Date Sheet</h3>
         <p>See exam dates and timings for your class, always current.</p>
         <button data-goto="datesheet">View date sheet &rarr;</button>
+      </div>
+      <div class="quick-card">
+        <div class="badge">Dy</div>
+        <h3>Daily Diary</h3>
+        <p>See today&rsquo;s diary and homework of every class, book by book.</p>
+        <button data-goto="diary">View diary &rarr;</button>
       </div>
       <div class="quick-card">
         <div class="badge">S</div>
@@ -494,7 +505,7 @@
   <!-- DATE SHEET -->
   <section class="tab" id="tab-diary">
     <div class="section-title"><span class="num">05A</span><h2>Daily Diary</h2></div>
-    <p class="section-sub">Pick a class to see its diary, book by book, for each book. Tests are not shown here; they are visible only to parents and students in the Student Portal.</p>
+    <p class="section-sub">Today&rsquo;s diary, class by class and book by book. Parents and students can see earlier days, weeks and months, and tests, after logging in to the Student Portal on the Home page.</p>
     <div class="filter-chips" id="diaryChips"></div>
     <div id="diaryWrap"></div>
   </section>
@@ -1123,6 +1134,7 @@ async function renderNotices(){
   const preview = document.getElementById('homeNoticesPreview');
   const top3 = sorted.slice(0,3);
   preview.innerHTML = top3.length ? top3.map(noticeHTML).join('') : '<div class="empty">No notifications posted yet.</div>';
+  if(typeof renderDiaryPublic === 'function') renderDiaryPublic();
 }
 
 /* ---------------- ADMISSION FORM ---------------- */
@@ -3547,6 +3559,7 @@ function renderDiaryAdmin(){
     <div class="field" style="max-width:220px;"><label>Session (for the marks list)</label><input value="${esc(DIARY.session)}" onchange="diaryPick('session',this.value.trim())"></div>
     ${DIARY.cls ? `<div class="field"><label>General note for the whole class (optional)</label><textarea rows="2" dir="auto" oninput="DIARY.note=this.value">${esc(DIARY.note)}</textarea></div>${rows || '<div class="empty">This class has no subjects yet.</div>'}
     <button type="button" class="btn-gold" onclick="diarySave()">Save Diary</button> <span class="note-inline">${DIARY.msg}</span>
+    <div id="diaryWaBox" style="margin-top:18px;border-top:2px solid var(--line);padding-top:14px;">${diaryWaHTML()}</div>
     ${recent.length ? `<h4 style="margin:16px 0 6px;">Recent diaries of ${esc(DIARY.cls)}</h4><table><tr><th>Date</th><th></th></tr>${recent.map(d=>`<tr><td class="mono">${esc(fmtDate(d.date))}</td><td><button type="button" class="tag-btn" onclick="diaryPick('date','${d.date}')">Edit</button> <button type="button" class="tag-btn danger" onclick="diaryDelete('${d.id}')">Delete</button></td></tr>`).join('')}</table>` : ''}` : '<div class="empty">Pick a class to write its diary.</div>'}`;
 }
 async function diarySave(){
@@ -3576,18 +3589,106 @@ function diaryEntriesHTML(list, studentId){
         return `<tr><td>${esc(it.subject)}</td><td dir="auto" style="white-space:pre-line;">${esc(it.text||'')}</td>${studentId?`<td>${test}</td>`:''}</tr>`;
       }).join('')}</table></div>` : ''}</div>`).join('');
 }
+function diaryLocal(d){ return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+function diaryToday(){ return diaryLocal(new Date()); }
 function renderDiaryPublic(){
-  const chips = document.getElementById('diaryChips'), wrap = document.getElementById('diaryWrap'); if(!chips || !wrap) return;
-  const classes = CLASS_LIST.filter(c=>DB.diary.some(d=>d.className===c));
+  const today = diaryToday();
+  const todays = DB.diary.filter(d=>d.date===today && (d.note || (d.items||[]).some(it=>it.text)));
+  const classes = CLASS_LIST.filter(c=>todays.some(d=>d.className===c));
   if(!diaryClassFilter || !classes.includes(diaryClassFilter)) diaryClassFilter = classes[0] || '';
-  chips.innerHTML = classes.map(c=>`<button class="chip ${c===diaryClassFilter?'active':''}" onclick="diaryClassFilter='${esc(c)}';renderDiaryPublic()">${esc(c)}</button>`).join('');
-  const list = DB.diary.filter(d=>d.className===diaryClassFilter).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,14);
-  wrap.innerHTML = diaryEntriesHTML(list, null);
+  [['diaryChips','diaryWrap'], ['homeDiaryChips','homeDiaryWrap']].forEach(([ci, wi])=>{
+    const chips = document.getElementById(ci), wrap = document.getElementById(wi); if(!chips || !wrap) return;
+    chips.innerHTML = classes.map(c=>`<button class="chip ${c===diaryClassFilter?'active':''}" onclick="diaryClassFilter='${esc(c)}';renderDiaryPublic()">${esc(c)}</button>`).join('');
+    wrap.innerHTML = classes.length ? diaryEntriesHTML(todays.filter(d=>d.className===diaryClassFilter), null) : '<div class="empty">Today&rsquo;s diary has not been posted yet.</div>';
+  });
 }
+const DIARY_P = { sid:'', range:'week', from:'', to:'' };
+function diaryBounds(){
+  const t = new Date(), P = DIARY_P;
+  if(P.range==='today') return [diaryLocal(t), diaryLocal(t)];
+  if(P.range==='week'){ const f = new Date(t); f.setDate(t.getDate()-6); return [diaryLocal(f), diaryLocal(t)]; }
+  if(P.range==='month') return [diaryLocal(new Date(t.getFullYear(), t.getMonth(), 1)), diaryLocal(t)];
+  return [P.from || '0000-00-00', P.to || '9999-99-99'];
+}
+function diaryPortalInner(sid){
+  const en = latestEnrollmentFor(sid); if(!en) return '';
+  const [f, t] = diaryBounds();
+  const list = DB.diary.filter(d=>d.className===en.className && d.date>=f && d.date<=t).sort((a,b)=>b.date.localeCompare(a.date));
+  const o = (v, l) => `<option value="${v}" ${DIARY_P.range===v?'selected':''}>${l}</option>`;
+  return `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;">
+      <div class="field" style="margin:0;"><label>Show</label><select onchange="DIARY_P.range=this.value;diaryPortalRefresh()">${o('today','Today')}${o('week','Last 7 days (weekly)')}${o('month','This month')}${o('custom','Choose dates')}</select></div>
+      ${DIARY_P.range==='custom' ? `<div class="field" style="margin:0;"><label>From</label><input type="date" value="${esc(DIARY_P.from)}" onchange="DIARY_P.from=this.value;diaryPortalRefresh()"></div><div class="field" style="margin:0;"><label>To</label><input type="date" value="${esc(DIARY_P.to)}" onchange="DIARY_P.to=this.value;diaryPortalRefresh()"></div>` : ''}
+    </div>
+    ${list.length ? `<p class="note-inline" style="margin:0 0 8px;">${list.length} day(s) of diary</p>` : ''}${diaryEntriesHTML(list, sid)}`;
+}
+function diaryPortalRefresh(){ document.querySelectorAll('.diaryPortalInner').forEach(el=>{ el.innerHTML = diaryPortalInner(DIARY_P.sid); }); }
 function diaryPortalHTML(student){
   const en = latestEnrollmentFor(student.id); if(!en) return '';
-  const list = DB.diary.filter(d=>d.className===en.className).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,14);
-  return `<div class="admin-block" style="margin-top:16px;"><h4 style="margin-bottom:8px;">Daily Diary &mdash; Class ${esc(en.className)}</h4>${diaryEntriesHTML(list, student.id)}</div>`;
+  DIARY_P.sid = student.id;
+  return `<div class="admin-block" style="margin-top:16px;"><h4 style="margin-bottom:8px;">Daily Diary &mdash; Class ${esc(en.className)}</h4><div class="diaryPortalInner">${diaryPortalInner(student.id)}</div></div>`;
+}
+
+/* ---------------- DIARY -> PARENTS ON WHATSAPP ----------------
+   Uses each student's saved Parent Contact Number. WhatsApp links open the
+   chat on the admin's own phone with the message filled in; the admin taps
+   Send in WhatsApp (nothing can be sent automatically without WhatsApp's
+   paid Business API). "Open next parent" makes it one tap per parent. */
+DIARY.wa = { key:'', sent:{} };
+function diaryWaPhone(raw){
+  let d = String(raw||'').replace(/\D/g,'');
+  if(d.startsWith('0092')) d = d.slice(2);
+  if(d.startsWith('0')) d = '92' + d.slice(1);
+  else if(d.length === 10 && d.startsWith('3')) d = '92' + d;
+  return d.length >= 11 ? d : '';
+}
+function diaryWaText(d, st, en){
+  const L = ['Quaid High School KSK', 'Daily Diary - Class ' + d.className, 'Date: ' + fmtDate(d.date)];
+  if(st) L.push('Student: ' + st.name + (en ? ' (Roll No ' + en.rollNo + ')' : ''));
+  L.push('');
+  if(d.note) L.push(d.note, '');
+  (d.items||[]).filter(it=>it.text).forEach(it=>L.push('*' + it.subject + ':* ' + it.text));
+  const tests = (d.items||[]).filter(it=>it.test);
+  if(tests.length){
+    L.push('', '*Test*');
+    tests.forEach(it=>{
+      const mv = st && it.marks ? it.marks[st.id] : undefined;
+      L.push(it.subject + (it.topic ? ' - ' + it.topic : '') + (it.total ? ' (Total Marks ' + it.total + ')' : '') + (mv !== undefined && mv !== '' ? ' - Marks Obtained: ' + mv : ''));
+    });
+  }
+  return L.join('\n');
+}
+function diaryWaList(){
+  const d = DB.diary.find(x=>x.date===DIARY.date && x.className===DIARY.cls); if(!d) return null;
+  const roster = DB.enrollments.filter(e=>e.className===DIARY.cls && e.session===DIARY.session)
+    .sort((a,b)=>String(a.rollNo).localeCompare(String(b.rollNo), undefined, {numeric:true}))
+    .map(e=>({ e, st: DB.students.find(x=>x.id===e.studentId) })).filter(x=>x.st);
+  roster.forEach(x=>{ x.ph = diaryWaPhone(x.st.parentPhone); x.link = x.ph ? whatsappLink(diaryWaText(d, x.st, x.e), x.ph) : ''; });
+  return { d, withNo: roster.filter(x=>x.ph), without: roster.filter(x=>!x.ph) };
+}
+function diaryWaState(){ const k = DIARY.date + '|' + DIARY.cls; if(DIARY.wa.key !== k) DIARY.wa = { key:k, sent:{} }; return DIARY.wa.sent; }
+function diaryWaHTML(){
+  const L = diaryWaList();
+  if(!L) return '<p class="note-inline">Save this diary first, then it can be sent to the parents on WhatsApp.</p>';
+  const sent = diaryWaState(), done = L.withNo.filter(x=>sent[x.st.id]).length;
+  return `<h4 style="margin:0 0 6px;">Send to parents on WhatsApp</h4>
+    <p class="note-inline" style="margin:0 0 8px;">Only the parents of Class ${esc(DIARY.cls)} (session ${esc(DIARY.session)}) who have a Parent Contact Number saved are listed. Press <b>Open next parent</b>: WhatsApp opens with that parent&rsquo;s message ready; tap Send there, come back here and press it again. Each message carries the child&rsquo;s own name${L.d.items.some(it=>it.test)?', and test marks if you entered them':''}.</p>
+    ${L.withNo.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;"><button type="button" class="btn-gold" onclick="diaryWaNext()">Open next parent &#9654;</button><button type="button" class="tag-btn" onclick="diaryWaCopy()">Copy message (for a class group)</button><button type="button" class="tag-btn ghost" onclick="DIARY.wa.sent={};diaryWaRefresh()">Start again</button><b>Opened ${done} of ${L.withNo.length}</b></div>
+    <div style="overflow-x:auto;"><table><tr><th>Roll</th><th>Name</th><th>Number</th><th></th></tr>${L.withNo.map(x=>`<tr><td class="mono">${esc(x.e.rollNo)}</td><td>${esc(x.st.name)}</td><td class="mono">${esc(x.ph)}</td><td><a class="tag-btn ${sent[x.st.id]?'ghost':''}" style="text-decoration:none;" target="_blank" rel="noopener" href="${esc(x.link)}" onclick="diaryWaMark('${x.st.id}')">${sent[x.st.id]?'&#10003; Opened':'Send'}</a></td></tr>`).join('')}</table></div>` : '<div class="empty">No parent in this class has a Parent Contact Number saved.</div>'}
+    ${L.without.length ? `<p class="note-inline" style="margin-top:8px;">No number saved for ${L.without.length}: ${esc(L.without.map(x=>x.st.name).join(', '))}. Add it in the student&rsquo;s profile.</p>` : ''}`;
+}
+function diaryWaRefresh(){ const el = document.getElementById('diaryWaBox'); if(el) el.innerHTML = diaryWaHTML(); }
+function diaryWaMark(sid){ diaryWaState()[sid] = true; setTimeout(diaryWaRefresh, 400); }
+function diaryWaNext(){
+  const L = diaryWaList(); if(!L) return;
+  const sent = diaryWaState(), nxt = L.withNo.find(x=>!sent[x.st.id]);
+  if(!nxt){ alert('Every parent in the list has been opened.'); return; }
+  window.open(nxt.link, '_blank'); sent[nxt.st.id] = true; diaryWaRefresh();
+}
+function diaryWaCopy(){
+  const L = diaryWaList(); if(!L) return;
+  const txt = diaryWaText(L.d, null, null).replace(/\n\n\*Test\*[\s\S]*$/, '');
+  if(navigator.clipboard) navigator.clipboard.writeText(txt).then(()=>alert('Message copied. Paste it in the WhatsApp group.')).catch(()=>prompt('Copy this message:', txt));
+  else prompt('Copy this message:', txt);
 }
 
 /* ---------------- FEE CARDS + QR (admin only) ----------------
