@@ -4956,7 +4956,8 @@ function pgRenderPaper(){
       <button type="button" class="tag-btn" onclick="pgPrintKey()">Print Answer Key</button>
       <button type="button" class="tag-btn" onclick="pgSavePaper()">Save Paper</button>
       <button type="button" class="tag-btn ghost" onclick="PG.paper=null;renderPaperGenerator()">Close Paper</button>
-    </div>`;
+    </div>
+    ${pgStuPanelHTML(p)}`;
 }
 function pgReplace(type, idx){
   if(!pgOK()) return;
@@ -4978,7 +4979,7 @@ function pgReplaceWith(type, idx, id){
   pgRenderPaper();
 }
 function pgRemoveQ(type, idx){ PG.paper.sections[type].splice(idx,1); pgRenderPaper(); }
-function pgPaperHTML(p){
+function pgPaperHTML(p, bare){
   const m = pgPaperLang(p), ur = m==='ur', both = m==='both';
   const F = 'font-family:'+PG_UR_FONT+';line-height:2;';
   const W = ur ? { cls:'جماعت', sub:'مضمون', tm:'کل نمبر', dt:'تاریخ', tt:'وقت', sec:'حصہ', mk:'نمبر', q:'سوال ' } : { cls:'Class', sub:'Subject', tm:'Total Marks', dt:'Date', tt:'Time', sec:'Section', mk:'Marks', q:'Q' };
@@ -4993,14 +4994,81 @@ function pgPaperHTML(p){
     </div>`;
   }).join('');
   return `<div ${ur?'dir="rtl"':''} style="font-family:${ur?PG_UR_FONT+',':''}'Times New Roman',serif;color:#000;font-size:14px;line-height:${ur?2.1:1.5};">
-    ${schoolBrandHTML(p.exam || 'Examination Paper')}
-    <table style="width:100%;border-collapse:collapse;margin-bottom:6px;font-size:13px;">
+    ${bare ? '' : schoolBrandHTML(p.exam || 'Examination Paper')}
+    ${bare ? '' : `<table style="width:100%;border-collapse:collapse;margin-bottom:6px;font-size:13px;">
       <tr><td><b>${W.cls}:</b> ${esc(p.cls)}</td><td><b>${W.sub}:</b> ${esc(p.subject)}</td><td><b>${W.tm}:</b> ${pgPaperTotal(p)}</td></tr>
       <tr><td><b>${W.dt}:</b> ${p.date?esc(fmtDate(p.date)):''}</td><td><b>${W.tt}:</b> ${esc(p.time||'')}</td><td></td></tr>
-    </table>
+    </table>`}
     ${sections}
   </div>`;
 }
+/* ---------------- STUDENT-WISE PAPERS: cover + MCQ bubble sheet ---------------- */
+const PG_CLASS_LABEL = { PG:'Play Group', Nursery:'Nursery', Prep:'Prep', One:'1st Class', Two:'2nd Class', Three:'3rd Class', Four:'4th Class', Five:'5th Class', Six:'6th Class', Seven:'7th Class', Eight:'8th Class', Nine:'9th Class', Ten:'10th Class' };
+function pgCoverHTML(p, st, en){
+  const nav = '#12307b', gold = '#e8a900', lb = '#cfe3f7', mcq = (p.sections.MCQ || []).length;
+  const bx = `border:1.5px solid ${nav};border-radius:10px;`;
+  const line = (label, val) => `<div style="display:flex;align-items:baseline;gap:6px;margin:5px 0;font-weight:700;font-size:13px;"><span>${label}</span><span style="flex:1;border-bottom:1.5px solid #000;min-height:16px;font-weight:600;padding:0 4px;">${esc(val||'')}</span></div>`;
+  const dot = `<span style="display:inline-block;width:14px;height:14px;border:1.5px solid ${nav};border-radius:50%;vertical-align:middle;"></span>`;
+  const perCol = mcq <= 12 ? mcq : Math.ceil(mcq/2);
+  const table = (from, to) => `<table style="border-collapse:collapse;width:100%;font-size:13px;text-align:center;border:1.5px solid ${nav};"><tr style="background:${lb};font-weight:700;">${['Q.No','A','B','C','D'].map(h=>`<th style="border:1px solid ${nav};padding:2px 0;">${h}</th>`).join('')}</tr>${Array.from({length:to-from+1},(_,i)=>`<tr><td style="border:1px solid ${nav};font-weight:700;height:21px;">${from+i}</td>${[1,2,3,4].map(()=>`<td style="border:1px solid ${nav};">${dot}</td>`).join('')}</tr>`).join('')}</table>`;
+  const bubbles = mcq ? `<div style="background:${nav};color:#fff;border-radius:10px;text-align:center;font-family:'Playfair Display',serif;font-weight:700;font-size:20px;padding:5px;margin:12px 0 8px;">MCQs Answer Sheet</div>
+    <div style="display:flex;gap:14px;align-items:flex-start;"><div style="flex:1;">${table(1, perCol)}</div>${mcq > perCol ? `<div style="flex:1;padding-left:16px;">${table(perCol+1, mcq)}</div>` : ''}</div>` : '';
+  return `<div style="font-family:'Times New Roman',serif;color:#000;">
+    <div style="background:${nav};color:#fff;border-radius:14px;padding:10px 12px;display:flex;align-items:center;gap:10px;">
+      <img src="${SCHOOL_LOGO}" alt="" style="width:74px;height:auto;background:#fff;border-radius:8px;padding:3px;flex:none;">
+      <div style="flex:1;text-align:center;">
+        <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:26px;line-height:1.1;">Quaid High School KSK</div>
+        <div style="display:inline-block;border:1.5px solid #fff;border-radius:8px;padding:2px 16px;font-weight:700;font-size:17px;margin-top:6px;">Examination Paper</div>
+        <div style="margin-top:6px;"><span style="display:inline-block;background:#fff;color:${nav};border-radius:16px;padding:2px 22px;font-weight:700;font-size:19px;">${esc(PG_CLASS_LABEL[p.cls] || p.cls)}</span></div>
+        ${p.exam ? `<div style="color:${gold};font-weight:700;font-size:17px;margin-top:4px;">${esc(p.exam)}</div>` : ''}
+      </div>
+      <div style="flex:none;width:120px;text-align:center;font-style:italic;font-size:14px;color:${gold};">Education for a Better Tomorrow</div>
+    </div>
+    <div style="${bx}margin-top:10px;display:flex;">
+      <div style="flex:1;padding:6px 12px;border-right:1.5px solid ${nav};">
+        ${line('Student Name:', st.name)}
+        <div style="display:flex;gap:14px;"><div style="flex:1;">${line('Class:', PG_CLASS_LABEL[p.cls] || p.cls)}</div><div style="flex:1;">${line('Roll No:', en.rollNo)}</div></div>
+        ${line('Subject:', p.subject)}${line('Date:', p.date ? fmtDate(p.date) : '')}
+      </div>
+      <div style="width:36%;padding:6px 12px;font-weight:700;font-size:13px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin:6px 0;"><span>Total Marks:</span><span style="${bx}min-width:64px;height:34px;display:inline-flex;align-items:center;justify-content:center;font-size:17px;">${pgPaperTotal(p)}</span></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin:10px 0 6px;"><span>Obtained Marks:</span><span style="${bx}min-width:64px;height:34px;display:inline-block;"></span></div>
+      </div>
+    </div>
+    <div style="${bx}margin-top:8px;display:flex;font-weight:700;font-size:13px;">
+      <div style="flex:1;padding:6px 10px;border-right:1.5px solid ${nav};height:62px;">Teacher&rsquo;s Signature:</div>
+      <div style="flex:1;padding:6px 10px;border-right:1.5px solid ${nav};">Principal&rsquo;s Signature:</div>
+      <div style="width:26%;padding:6px 10px;text-align:center;">School Stamp:<div style="width:42px;height:42px;border:1.5px solid ${nav};border-radius:50%;margin:3px auto 0;"></div></div>
+    </div>
+    ${bubbles}
+    <div style="background:${nav};color:#fff;border-radius:10px;text-align:center;font-style:italic;font-weight:700;font-size:18px;padding:5px;margin-top:12px;">Best of Luck!</div>
+  </div>`;
+}
+function pgStuRoster(p){
+  return DB.enrollments.filter(e=>e.session===PG.stu.session && e.className===p.cls)
+    .sort((a,b)=>String(a.rollNo).localeCompare(String(b.rollNo), undefined, {numeric:true}))
+    .map(e=>({ e, st: DB.students.find(x=>x.id===e.studentId) })).filter(x=>x.st);
+}
+function pgStuCount(){ const el = document.getElementById('pgStuCnt'); if(el && PG.paper) el.textContent = pgStuRoster(PG.paper).filter(x=>PG.stu.sel[x.st.id]).length; }
+function pgStuAll(on){ PG.stu.sel = {}; if(on) pgStuRoster(PG.paper).forEach(x=>{ PG.stu.sel[x.st.id] = true; }); pgRenderPaper(); }
+function pgStuPanelHTML(p){
+  const r = pgStuRoster(p), S = PG.stu, mcq = (p.sections.MCQ || []).length;
+  return `<div class="admin-block" style="margin-top:18px;background:#fff;"><h3 style="font-size:15px;">Papers for students (cover + MCQ bubble sheet)</h3>
+    <p class="note-inline" style="margin:-4px 0 10px;">Each selected student gets their own printed paper: a cover with their name, class and roll no, the total marks (${pgPaperTotal(p)}), empty boxes for obtained marks and signatures, a bubble sheet for the ${mcq} MCQ(s), and then the questions. Exam name above (e.g. 2nd Term) is printed on the cover.</p>
+    <div class="row-2"><div class="field"><label>Session of the students</label><input value="${esc(S.session)}" onchange="PG.stu.session=this.value.trim();PG.stu.sel={};pgRenderPaper()"></div>
+    <div class="field" style="display:flex;gap:8px;align-items:flex-end;"><button type="button" class="tag-btn" onclick="pgStuAll(true)">Select all</button><button type="button" class="tag-btn ghost" onclick="pgStuAll(false)">Select none</button></div></div>
+    ${r.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:4px 12px;margin:8px 0 12px;">${r.map(x=>`<label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:0;"><input type="checkbox" style="width:auto;" ${S.sel[x.st.id]?'checked':''} onchange="PG.stu.sel['${x.st.id}']=this.checked;pgStuCount()"> <span class="mono">${esc(x.e.rollNo)}</span> ${esc(x.st.name)}</label>`).join('')}</div>
+    <button type="button" class="btn-gold" onclick="pgPrintStudents()">Print papers for selected students (<span id="pgStuCnt">${r.filter(x=>S.sel[x.st.id]).length}</span>)</button>` : `<div class="empty">No students are enrolled in ${esc(p.cls)} for session ${esc(S.session)}.</div>`}
+  </div>`;
+}
+function pgPrintStudents(){
+  if(!pgOK() || !PG.paper) return;
+  const p = PG.paper, picked = pgStuRoster(p).filter(x=>PG.stu.sel[x.st.id]);
+  if(!picked.length){ alert('Select at least one student first.'); return; }
+  const body = pgPaperHTML(p, true);
+  printHTML(picked.map(x=>`<div style="page-break-after:always;">${pgCoverHTML(p, x.st, x.e)}</div><div style="page-break-after:always;">${body}</div>`).join(''));
+}
+
 function pgPrintKey(){
   if(!pgOK() || !PG.paper) return;
   const p = PG.paper; let n = 0;
@@ -5995,6 +6063,7 @@ PG.add = {
   match:{ instr:'Match the items in Column A with those in Column B.', L:['','','','',''], R:['','','','',''] }
 };
 PG.gt.spread = true; PG.gt.lang = 'en'; PG.gt.bothOnly = false;
+PG.stu = { session: String(new Date().getFullYear()), sel:{} };
 PG.add.lang = 'en'; PG.add.editRid = ''; PG.add.flt = { chapter:'', type:'', q:'' }; PG.add.showN = 50; PG.add.mcq.qu = ''; PG.add.mcq.ou = ['','','','']; PG.add.bulkUr = { Short:'', Long:'' }; PG.add.rows = { Short:[1,2,3,4,5].map(()=>({en:'',ur:''})), Long:[1,2,3].map(()=>({en:'',ur:''})) }; PG.add.tf = [1,2,3,4,5].map(()=>({t:'',a:''}));
 const PG_ADD_KINDS = [['MCQ','MCQs'],['Short','Short Questions'],['Long','Long Questions'],['TF','True / False (✓ ✗)'],['Fill','Fill in the Blanks'],['Match','Match Columns']];
 const PG_ADD_HELP = {
