@@ -292,6 +292,7 @@
     <button type="button" class="nav-dropdown-toggle">Academics <span class="caret">&#9662;</span></button>
     <div class="nav-dropdown-menu">
       <button data-tab="datesheet">Date Sheet</button>
+      <button data-tab="diary">Daily Diary</button>
       <button data-tab="gazette">Result Gazette</button>
       <button data-tab="calendar">Academic Calendar</button>
       <button data-tab="notes">Study Notes</button>
@@ -491,6 +492,13 @@
   </section>
 
   <!-- DATE SHEET -->
+  <section class="tab" id="tab-diary">
+    <div class="section-title"><span class="num">05A</span><h2>Daily Diary</h2></div>
+    <p class="section-sub">Pick a class to see its diary, book by book, for each book. Tests are not shown here; they are visible only to parents and students in the Student Portal.</p>
+    <div class="filter-chips" id="diaryChips"></div>
+    <div id="diaryWrap"></div>
+  </section>
+
   <section class="tab" id="tab-datesheet">
     <div class="section-title"><span class="num">05</span><h2>Exam Date Sheet</h2></div>
     <p class="section-sub">Filter by session (year) and class to see the relevant exam dates and timings.</p>
@@ -864,7 +872,7 @@ async function downloadElementAsPDF(elementId, filename, statusElId){
   }
 }
 
-let DB = { notifications:[], students:[], admissions:[], datesheet:[], results:[], enrollments:[], classSubjects:{}, aboutUs:[], complaints:[], studentAccounts:{}, academicCalendar:[], notes:[], pairingSchemes:[], attendance:[], inoutDays:{}, feeRecords:[] };
+let DB = { notifications:[], students:[], admissions:[], datesheet:[], results:[], enrollments:[], classSubjects:{}, aboutUs:[], complaints:[], studentAccounts:{}, academicCalendar:[], notes:[], pairingSchemes:[], attendance:[], inoutDays:{}, feeRecords:[], diary:[] };
 let calSessionFilter = 'All';
 let isAdmin = false;
 let dsClassFilter = 'All';
@@ -904,6 +912,7 @@ async function loadAll(){
   DB.pairingSchemes = await getData('pairingSchemes', []);
   DB.attendance    = await getData('attendance', []);
   DB.studentAccounts = await getData('studentAccounts', {});
+  DB.diary = await getData('diary', []);
 }
 
 /* ---------------- nav ---------------- */
@@ -933,6 +942,7 @@ function goto(tab){
   window.scrollTo({top:0,behavior:'smooth'});
   if(tab==='notifications') renderNotices();
   if(tab==='datesheet') renderDateSheet();
+  if(tab==='diary') renderDiaryPublic();
   if(tab==='calendar') renderAcademicCalendar();
   if(tab==='notes') showNotesTab();
   if(tab==='pairing') renderPairingScheme();
@@ -1738,7 +1748,8 @@ function renderGazette(){
 }
 
 /* ---------------- STUDENT PORTAL (B-FORM LOGIN) ---------------- */
-function buildPortalRecordHTML(student, scope){
+function buildPortalRecordHTML(student, scope){ return buildPortalRecordHTML0(student, scope) + diaryPortalHTML(student); }
+function buildPortalRecordHTML0(student, scope){
   const enrolls = DB.enrollments
     .filter(en=>en.studentId===student.id)
     .map(en=>({ ...en, student }))
@@ -2464,6 +2475,8 @@ function renderAdminPanel(){
       })()}
     </div>
 
+    <div class="admin-block" id="diaryBlock"></div>
+
     <div class="admin-block" id="feeScanBlock">
       <h3>Fee Card Scanner (QR)</h3>
       <p class="note-inline" style="margin:-6px 0 14px;">Admin only. Scan a student's Fee Card (or ID card) QR to see paid dues, pending dues, the total and the books / copies / diary records.</p>
@@ -2478,6 +2491,7 @@ function renderAdminPanel(){
   renderInOutRecords();
   renderCardsPreview();
   renderFeeBlock();
+  renderDiaryAdmin();
   renderPaperGenerator();
 
   document.getElementById('aboutUsForm').addEventListener('submit', async e=>{
@@ -3492,6 +3506,88 @@ async function downloadCardsPDF(allClasses){
     console.error(err);
     if(st) st.innerHTML = '<div class="msg-err">Could not create the PDF, please try again.</div>';
   }
+}
+
+/* ---------------- DAILY DIARY ----------------
+   DB.diary: one entry per class per date { id, date, className, note,
+   items:[{ subject, text, test, topic, total, marks:{studentId:marks} }] }.
+   Public page + Student Portal show the diary and each test's total
+   marks; the Student Portal also shows only that student's own marks. */
+const DIARY = { date: new Date().toISOString().slice(0,10), cls:'', session: String(new Date().getFullYear()), note:'', rows:{}, msg:'' };
+let diaryClassFilter = '';
+function diarySubjects(){ return (DB.classSubjects && DB.classSubjects[DIARY.cls]) || []; }
+function diaryRow(i){ const sub = diarySubjects()[i]; return DIARY.rows[sub] || (DIARY.rows[sub] = { text:'', test:false, topic:'', total:'', marks:{} }); }
+function diaryLoadEntry(){
+  const e = DB.diary.find(d=>d.date===DIARY.date && d.className===DIARY.cls);
+  DIARY.note = e ? (e.note||'') : ''; DIARY.rows = {};
+  (e ? e.items : []).forEach(it=>{ DIARY.rows[it.subject] = { text:it.text||'', test:!!it.test, topic:it.topic||'', total:it.total||'', marks:Object.assign({}, it.marks||{}) }; });
+}
+function diaryTick(i, on){ diaryRow(i).test = on; const el = document.getElementById('diaryTest_' + i); if(el) el.style.display = on ? 'block' : 'none'; }
+function diaryPick(what, v){ DIARY[what] = v; if(what==='date' || what==='cls') diaryLoadEntry(); DIARY.msg = ''; renderDiaryAdmin(); }
+function renderDiaryAdmin(){
+  const el = document.getElementById('diaryBlock'); if(!el || !isAdmin) return;
+  const subs = diarySubjects();
+  const roster = DB.enrollments.filter(e=>e.className===DIARY.cls && e.session===DIARY.session).sort((a,b)=>String(a.rollNo).localeCompare(String(b.rollNo), undefined, {numeric:true}));
+  const bx = 'border:1px solid var(--line);border-radius:6px;padding:10px;margin-bottom:8px;background:#fff;';
+  const rows = subs.map((sub,i)=>{
+    const r = diaryRow(i);
+    const tbl = roster.length ? `<div style="overflow-x:auto;"><table><tr><th>Roll</th><th>Name</th><th>Marks obtained</th></tr>${roster.map(e=>{ const st = DB.students.find(x=>x.id===e.studentId); if(!st) return ''; const mv = r.marks[st.id]; return `<tr><td class="mono">${esc(e.rollNo)}</td><td>${esc(st.name)}</td><td><input type="number" min="0" style="width:90px;" value="${esc(mv===undefined?'':mv)}" oninput="diaryRow(${i}).marks['${st.id}']=this.value"></td></tr>`; }).join('')}</table></div>` : '<p class="note-inline">No students enrolled in this class for this session, so marks cannot be entered.</p>';
+    return `<div style="${bx}"><b>${esc(sub)}</b>
+      <textarea rows="2" dir="auto" placeholder="Today's diary / homework for ${esc(sub)}" style="width:100%;margin:6px 0;padding:8px;border:1px solid var(--line);border-radius:6px;font-family:inherit;" oninput="diaryRow(${i}).text=this.value">${esc(r.text)}</textarea>
+      <label style="display:flex;gap:8px;align-items:center;font-weight:600;margin:0;"><input type="checkbox" style="width:auto;" ${r.test?'checked':''} onchange="diaryTick(${i},this.checked)"> Test</label>
+      <div id="diaryTest_${i}" style="display:${r.test?'block':'none'};margin-top:8px;">
+        <div class="row-2"><div class="field" style="margin:0;"><label>Test on (chapter / topic)</label><input value="${esc(r.topic)}" oninput="diaryRow(${i}).topic=this.value"></div><div class="field" style="margin:0;"><label>Total marks</label><input type="number" min="0" value="${esc(r.total)}" oninput="diaryRow(${i}).total=this.value"></div></div>
+        <p class="note-inline" style="margin:8px 0 4px;">Marks (optional &mdash; tests are hidden from the public Diary page completely; only the child's parent / the student sees the test, its total marks and their own marks in the Student Portal):</p>${tbl}
+      </div></div>`;
+  }).join('');
+  const recent = DB.diary.filter(d=>d.className===DIARY.cls).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10);
+  el.innerHTML = `<h3>Daily Diary</h3>
+    <p class="note-inline" style="margin:-6px 0 14px;">Write the day's diary for each book of a class. Tick <b>Test</b> on a book only if there is a test &mdash; its topic, total marks and student marks then open. Everyone can read the diary on the Daily Diary page; tests (topic and marks) are visible only to parents and students in the Student Portal.</p>
+    <div class="row-2"><div class="field"><label>Date</label><input type="date" value="${esc(DIARY.date)}" onchange="diaryPick('date',this.value)"></div><div class="field"><label>Class</label><select onchange="diaryPick('cls',this.value)">${classOptionsHTML(DIARY.cls)}</select></div></div>
+    <div class="field" style="max-width:220px;"><label>Session (for the marks list)</label><input value="${esc(DIARY.session)}" onchange="diaryPick('session',this.value.trim())"></div>
+    ${DIARY.cls ? `<div class="field"><label>General note for the whole class (optional)</label><textarea rows="2" dir="auto" oninput="DIARY.note=this.value">${esc(DIARY.note)}</textarea></div>${rows || '<div class="empty">This class has no subjects yet.</div>'}
+    <button type="button" class="btn-gold" onclick="diarySave()">Save Diary</button> <span class="note-inline">${DIARY.msg}</span>
+    ${recent.length ? `<h4 style="margin:16px 0 6px;">Recent diaries of ${esc(DIARY.cls)}</h4><table><tr><th>Date</th><th></th></tr>${recent.map(d=>`<tr><td class="mono">${esc(fmtDate(d.date))}</td><td><button type="button" class="tag-btn" onclick="diaryPick('date','${d.date}')">Edit</button> <button type="button" class="tag-btn danger" onclick="diaryDelete('${d.id}')">Delete</button></td></tr>`).join('')}</table>` : ''}` : '<div class="empty">Pick a class to write its diary.</div>'}`;
+}
+async function diarySave(){
+  if(!DIARY.cls) return;
+  const items = diarySubjects().map(sub=>{ const r = DIARY.rows[sub] || {}; return { subject:sub, text:(r.text||'').trim(), test:!!r.test, topic:r.test ? (r.topic||'').trim() : '', total:r.test ? String(r.total||'') : '', marks:r.test ? (r.marks||{}) : {} }; }).filter(it=>it.text || it.test);
+  if(!items.length && !DIARY.note.trim()){ alert('Write the diary for at least one book first.'); return; }
+  const idx = DB.diary.findIndex(d=>d.date===DIARY.date && d.className===DIARY.cls);
+  const rec = { id: idx>=0 ? DB.diary[idx].id : uid(), date:DIARY.date, className:DIARY.cls, note:DIARY.note.trim(), items };
+  if(idx>=0) DB.diary[idx] = rec; else DB.diary.push(rec);
+  await setData('diary', DB.diary);
+  DIARY.msg = 'Saved.'; renderDiaryAdmin();
+}
+async function diaryDelete(id){
+  if(!confirm('Delete this diary?')) return;
+  DB.diary = DB.diary.filter(d=>d.id!==id); await setData('diary', DB.diary);
+  diaryLoadEntry(); DIARY.msg = ''; renderDiaryAdmin();
+}
+function diaryEntriesHTML(list, studentId){
+  /* studentId set = Student Portal (shows tests + marks); null = public page (diary only, no tests at all) */
+  const rows = list.map(d=>({ d, its:(d.items||[]).filter(it=>studentId ? (it.text || it.test) : it.text) })).filter(x=>x.its.length || x.d.note);
+  if(!rows.length) return '<div class="empty">No diary has been posted yet.</div>';
+  return rows.map(({d, its})=>`<div class="admin-block" style="background:#fff;margin-bottom:12px;"><h4 style="margin:0 0 8px;">${esc(fmtDate(d.date))} &middot; ${esc(d.className)}</h4>
+      ${d.note ? `<p class="note-inline" style="margin:0 0 8px;white-space:pre-line;">${esc(d.note)}</p>` : ''}
+      ${its.length ? `<div style="overflow-x:auto;"><table><tr><th>Book / Subject</th><th>Diary</th>${studentId?'<th>Test</th>':''}</tr>${its.map(it=>{
+        const mv = studentId && it.marks ? it.marks[studentId] : undefined;
+        const test = it.test ? 'Test' + (it.topic ? ': ' + esc(it.topic) : '') + '<br>Total Marks: ' + esc(it.total || '-') + (mv !== undefined && mv !== '' ? '<br><b>Marks Obtained: ' + esc(mv) + '</b>' : '') : '';
+        return `<tr><td>${esc(it.subject)}</td><td dir="auto" style="white-space:pre-line;">${esc(it.text||'')}</td>${studentId?`<td>${test}</td>`:''}</tr>`;
+      }).join('')}</table></div>` : ''}</div>`).join('');
+}
+function renderDiaryPublic(){
+  const chips = document.getElementById('diaryChips'), wrap = document.getElementById('diaryWrap'); if(!chips || !wrap) return;
+  const classes = CLASS_LIST.filter(c=>DB.diary.some(d=>d.className===c));
+  if(!diaryClassFilter || !classes.includes(diaryClassFilter)) diaryClassFilter = classes[0] || '';
+  chips.innerHTML = classes.map(c=>`<button class="chip ${c===diaryClassFilter?'active':''}" onclick="diaryClassFilter='${esc(c)}';renderDiaryPublic()">${esc(c)}</button>`).join('');
+  const list = DB.diary.filter(d=>d.className===diaryClassFilter).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,14);
+  wrap.innerHTML = diaryEntriesHTML(list, null);
+}
+function diaryPortalHTML(student){
+  const en = latestEnrollmentFor(student.id); if(!en) return '';
+  const list = DB.diary.filter(d=>d.className===en.className).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,14);
+  return `<div class="admin-block" style="margin-top:16px;"><h4 style="margin-bottom:8px;">Daily Diary &mdash; Class ${esc(en.className)}</h4>${diaryEntriesHTML(list, student.id)}</div>`;
 }
 
 /* ---------------- FEE CARDS + QR (admin only) ----------------
@@ -5899,7 +5995,7 @@ PG.add = {
   match:{ instr:'Match the items in Column A with those in Column B.', L:['','','','',''], R:['','','','',''] }
 };
 PG.gt.spread = true; PG.gt.lang = 'en'; PG.gt.bothOnly = false;
-PG.add.lang = 'en'; PG.add.mcq.qu = ''; PG.add.mcq.ou = ['','','','']; PG.add.bulkUr = { Short:'', Long:'' }; PG.add.rows = { Short:[1,2,3,4,5].map(()=>({en:'',ur:''})), Long:[1,2,3].map(()=>({en:'',ur:''})) }; PG.add.tf = [1,2,3,4,5].map(()=>({t:'',a:''}));
+PG.add.lang = 'en'; PG.add.editRid = ''; PG.add.flt = { chapter:'', type:'', q:'' }; PG.add.showN = 50; PG.add.mcq.qu = ''; PG.add.mcq.ou = ['','','','']; PG.add.bulkUr = { Short:'', Long:'' }; PG.add.rows = { Short:[1,2,3,4,5].map(()=>({en:'',ur:''})), Long:[1,2,3].map(()=>({en:'',ur:''})) }; PG.add.tf = [1,2,3,4,5].map(()=>({t:'',a:''}));
 const PG_ADD_KINDS = [['MCQ','MCQs'],['Short','Short Questions'],['Long','Long Questions'],['TF','True / False (✓ ✗)'],['Fill','Fill in the Blanks'],['Match','Match Columns']];
 const PG_ADD_HELP = {
   Short:'Write one question on each line. Add as many lines as you like.',
@@ -5965,8 +6061,77 @@ function pgAddHTML(){
     </div>
     ${pgAddLangBox()}
     ${body}
-    ${A.recent.length ? `<h4 style="margin:20px 0 6px;">Added just now</h4>
-      <div style="border:1px solid var(--line);border-radius:6px;background:#fff;">${A.recent.map(r=>`<div style="display:flex;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line);align-items:flex-start;"><span dir="auto" style="flex:1;white-space:pre-line;font-size:13px;">${esc(pgShort(r.text,200))}</span><button type="button" class="tag-btn danger" style="padding:2px 8px;font-size:11px;" onclick="pgAddUndo('${r.id}')">Remove</button></div>`).join('')}</div>` : ''}`;
+    ${pgAddListHTML()}`;
+}
+function pgRecentRowHTML(r){
+  const ip = 'padding:4px 8px;border:1px solid var(--line);border-radius:6px;font-size:12px;';
+  return `<div style="padding:8px 10px;border-bottom:1px solid var(--line);">
+    <div style="display:flex;gap:8px;align-items:flex-start;"><span dir="auto" style="flex:1;white-space:pre-line;font-size:13px;">${esc(pgShort(r.text,200))}<br><small style="color:var(--muted);">${esc(r.type)}${r.textUr?' &middot; Urdu &#10003;':''}</small></span><button type="button" class="tag-btn" style="padding:2px 8px;font-size:11px;" onclick="PG.add.editRid='${r.id}';pgRenderBody()">Edit</button><button type="button" class="tag-btn danger" style="padding:2px 8px;font-size:11px;" onclick="pgDeleteFromAdd('${r.id}')">Delete</button></div>
+    <div style="display:flex;gap:8px;margin-top:6px;align-items:center;"><input list="pgreList" value="${esc(r.chapter||'')}" placeholder="chapter" style="flex:1;${ip}" onchange="pgQuickSet('${r.id}','chapter',this)"><input type="number" min="0.5" step="0.5" value="${esc(r.marks)}" style="width:70px;${ip}" onchange="pgQuickSet('${r.id}','marks',this)"><small style="color:var(--muted);">marks</small></div></div>`;
+}
+function pgRecentEditHTML(r){
+  const sen = pgSenior(PG.cls), U = 'font-family:'+PG_UR_FONT+';';
+  return `<div style="padding:10px;border-bottom:1px solid var(--line);background:#f8f9fb;">
+    <div class="field"><label>Question${sen?' (English)':''} &mdash; for MCQ put each option on a new line</label><textarea id="pgreText" rows="3" dir="auto">${esc(r.text)}</textarea></div>
+    ${sen ? `<div class="field"><label>Urdu version (اردو)</label><textarea id="pgreUr" rows="3" dir="rtl" style="${U}">${esc(r.textUr||'')}</textarea></div>` : `<div class="field"><label>Language</label><select id="pgreLang"><option value="en" ${pgLangOf(r)==='en'?'selected':''}>English</option><option value="ur" ${pgLangOf(r)==='ur'?'selected':''}>اردو (Urdu)</option></select></div>`}
+    <div class="field"><label>Answer / Solution (optional)</label><textarea id="pgreAns" rows="2" dir="auto">${esc(r.answer||'')}</textarea></div>
+    <div class="row-2"><div class="field"><label>Type</label><select id="pgreType">${pgOpts(pgTypes(), r.type)}</select></div><div class="field"><label>Source</label><select id="pgreSource">${pgOpts(PG_SOURCES, r.source)}</select></div></div>
+    <div class="row-2"><div class="field"><label>Chapter / Unit</label><input id="pgreChapter" list="pgreChList" value="${esc(r.chapter||'')}"><datalist id="pgreChList">${pgChapters().map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div><div class="field"><label>Marks</label><input id="pgreMarks" type="number" min="0.5" step="0.5" value="${esc(r.marks)}"></div></div>
+    <button type="button" class="btn-gold" onclick="pgRecentSave('${r.id}')">Save changes</button> <button type="button" class="tag-btn ghost" onclick="PG.add.editRid='';pgRenderBody()">Cancel</button></div>`;
+}
+async function pgRecentSave(id){
+  if(!pgOK()) return;
+  const g = i => document.getElementById(i), text = g('pgreText').value.trim();
+  if(!text){ alert('Write the question first.'); return; }
+  const type = g('pgreType').value;
+  const rec = { text, type, source:g('pgreSource').value, chapter:g('pgreChapter').value.trim(), answer:g('pgreAns').value.trim(), marks: parseFloat(g('pgreMarks').value) || PG_DEFAULT_MARKS[type] };
+  if(pgSenior(PG.cls)){ const u = g('pgreUr').value.trim(); rec.textUr = u; rec.lang = u ? 'both' : 'en'; } else rec.lang = g('pgreLang').value;
+  [PG.bank.find(q=>q.id===id), PG.add.recent.find(q=>q.id===id)].forEach(q=>{ if(q) Object.assign(q, rec); });
+  PG.add.editRid = '';
+  await pgSaveBank(); pgRenderBody();
+}
+function pgAddFiltered(){
+  const f = PG.add.flt, t = (f.q||'').trim().toLowerCase();
+  return PG.bank.slice().reverse().filter(q=>(!f.chapter || q.chapter===f.chapter) && (!f.type || q.type===f.type) && (!t || (q.text||'').toLowerCase().includes(t) || (q.textUr||'').includes(t)));
+}
+function pgAddListHTML(){
+  const A = PG.add, f = A.flt, list = pgAddFiltered(), shown = list.slice(0, A.showN || 50);
+  if(!PG.bank.length) return '<div class="empty" style="margin-top:16px;">No questions yet for this subject.</div>';
+  return `<h4 style="margin:22px 0 6px;">All questions &mdash; ${esc(PG.cls)} ${esc(PG.subject)} (${PG.bank.length}), newest first</h4>
+    <datalist id="pgreList">${pgChapters().map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
+    <div class="row-2"><div class="field"><label>Chapter</label><select onchange="PG.add.flt.chapter=this.value;PG.add.showN=50;pgRenderBody()">${pgOpts(pgChapters(), f.chapter, 'All chapters')}</select></div><div class="field"><label>Type</label><select onchange="PG.add.flt.type=this.value;PG.add.showN=50;pgRenderBody()">${pgOpts(pgTypes(), f.type, 'All')}</select></div></div>
+    <div class="field"><label>Search (press Enter)</label><input value="${esc(f.q||'')}" onchange="PG.add.flt.q=this.value;PG.add.showN=50;pgRenderBody()"></div>
+    ${pgRecentBulkHTML(list.length)}
+    <p class="note-inline" style="margin:6px 0;">Showing ${shown.length} of ${list.length}. Change a chapter or marks right in the row, or press Edit for everything.</p>
+    <div style="border:1px solid var(--line);border-radius:6px;background:#fff;">${shown.map(r=>A.editRid===r.id ? pgRecentEditHTML(r) : pgRecentRowHTML(r)).join('') || '<div class="empty">No questions match.</div>'}</div>
+    ${list.length > shown.length ? `<button type="button" class="tag-btn" style="margin-top:8px;" onclick="PG.add.showN=(PG.add.showN||50)+50;pgRenderBody()">Show 50 more</button>` : ''}`;
+}
+function pgRecentBulkHTML(n){
+  return `<details style="border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:#fff;"><summary style="cursor:pointer;font-weight:600;font-size:13px;">Change chapter / marks of all ${n} listed questions together</summary>
+    <div class="row-2" style="margin-top:8px;"><div class="field" style="margin:0;"><label>Chapter / Unit</label><input id="pgreBCh" list="pgreList" placeholder="leave empty to keep"></div><div class="field" style="margin:0;"><label>Marks</label><input id="pgreBMk" type="number" min="0.5" step="0.5" placeholder="leave empty to keep"></div></div>
+    <button type="button" class="tag-btn" style="margin-top:8px;" onclick="pgRecentBulk()">Apply to all ${n}</button></details>`;
+}
+async function pgRecentBulk(){
+  if(!pgOK()) return;
+  const ch = document.getElementById('pgreBCh').value.trim(), mk = parseFloat(document.getElementById('pgreBMk').value), list = pgAddFiltered();
+  if(!ch && !(mk>0)){ alert('Type a chapter and/or marks first.'); return; }
+  if(!confirm('Change ' + list.length + ' questions?')) return;
+  list.forEach(q=>{ if(ch) q.chapter = ch; if(mk>0) q.marks = mk; });
+  await pgSaveBank(); pgRenderBody();
+}
+async function pgQuickSet(id, field, el){
+  const q = PG.bank.find(x=>x.id===id); if(!q) return;
+  if(field==='marks'){ const m = parseFloat(el.value); if(!(m>0)){ el.value = q.marks; return; } q.marks = m; }
+  else q.chapter = el.value.trim();
+  await pgSaveBank();
+  el.style.outline = '2px solid #1a7f37'; setTimeout(()=>{ el.style.outline = ''; }, 900);
+}
+async function pgDeleteFromAdd(id){
+  if(!pgOK() || !confirm('Delete this question from the bank?')) return;
+  PG.bank = PG.bank.filter(q=>q.id!==id);
+  PG.add.recent = PG.add.recent.filter(q=>q.id!==id);
+  delete PG.sel[id];
+  await pgSaveBank(); pgRenderBody();
 }
 async function pgAddStore(items){
   if(!pgOK()) return 0;
@@ -5980,7 +6145,7 @@ async function pgAddStore(items){
     if(it.textUr && it.textUr.trim()) q.textUr = it.textUr.trim();
     PG.bank.push(q); A.recent.unshift(q); n++;
   });
-  A.recent = A.recent.slice(0,12);
+  A.recent = A.recent.slice(0,30);
   if(!n){ A.note = '<div class="msg-err">Nothing new to add (empty, or the same question is already saved).</div>'; return 0; }
   const ok = await pgSaveBank();
   A.note = ok ? `<div class="msg-ok">${n} question(s) saved.</div>` : (PG.msg || '');
