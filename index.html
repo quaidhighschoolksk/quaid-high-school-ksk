@@ -4533,6 +4533,18 @@ const PG_TYPES = ['MCQ','Fill','TF','Match','Short','Long'];
 const PG_TYPE_LABEL = { MCQ:'Multiple Choice Questions', Fill:'Fill in the Blanks', TF:'True / False (✓ or ✗)', Match:'Match the Columns', Short:'Short Questions', Long:'Long Questions' };
 const PG_SOURCES = ['Exercise','Past Paper','Additional','Conceptual'];
 const PG_DEFAULT_MARKS = { MCQ:1, Fill:1, TF:1, Match:5, Short:2, Long:5 };
+/* Objective paper = MCQ / Fill / True-False / Match ; Subjective paper = Short / Long.
+   One generated paper can be printed as two separate papers (own Q1.., own time, own key, own student covers). */
+const PG_OBJ_TYPES = ['MCQ','Fill','TF','Match'], PG_SUBJ_TYPES = ['Short','Long'];
+function pgHasPart(p, part){ return (part==='obj' ? PG_OBJ_TYPES : PG_SUBJ_TYPES).some(t=>((p.sections||{})[t]||[]).length); }
+function pgHasBoth(p){ return pgHasPart(p,'obj') && pgHasPart(p,'sub'); }
+function pgPart(p, part){
+  const types = part==='obj' ? PG_OBJ_TYPES : PG_SUBJ_TYPES, sections = {};
+  PG_TYPES.forEach(t=>{ sections[t] = types.includes(t) ? (p.sections[t]||[]) : []; });
+  return { ...p, sections, order: p.order ? p.order.filter(t=>types.includes(t)) : null,
+    time: (part==='obj' ? p.timeObj : p.timeSub) || p.time || '',
+    exam: (p.exam ? p.exam + ' \u2014 ' : '') + (part==='obj' ? 'Objective' : 'Subjective') + ' Paper' };
+}
 let PG = { cls:'', subject:'', bank:[], tab:'bank', imp:[], impMsg:'', paper:null, sel:{}, msg:'', editId:'', flt:{chapter:'',type:'',source:''}, saved:[], cfg:{apiKey:''}, src:[], lastText:'' };
 
 function pgKey(){ return 'bank__' + (PG.cls+'__'+PG.subject).replace(/[\/\s]+/g,'_'); }
@@ -5019,7 +5031,8 @@ function pgRenderPaper(){
   const p = PG.paper;
   if(!p){ w.innerHTML=''; return; }
   const inPaper = new Set(PG_TYPES.flatMap(t=>(p.sections[t]||[]).map(q=>q.id)));
-  let n = 0;
+  let n = 0, lastPart = '';
+  const both = pgHasBoth(p);
   w.innerHTML = `
     <hr style="margin:22px 0;border:none;border-top:2px solid var(--line);">
     <h3 style="font-size:15px;">Paper &mdash; ${esc(p.cls)} / ${esc(p.subject)} &nbsp;<small style="color:var(--muted);">Total marks: ${pgPaperTotal(p)}</small></h3>
@@ -5027,12 +5040,15 @@ function pgRenderPaper(){
       <div class="field"><label>Exam name</label><input value="${esc(p.exam)}" placeholder="e.g. First Term Examination 2026" oninput="PG.paper.exam=this.value"></div>
       <div class="field"><label>Date</label><input type="date" value="${esc(p.date)}" oninput="PG.paper.date=this.value"></div>
     </div>
-    <div class="field"><label>Time allowed</label><input value="${esc(p.time)}" placeholder="e.g. 2 hours" oninput="PG.paper.time=this.value"></div>
+    <div class="field"><label>Time allowed${both?' (whole paper, used if a part below is left empty)':''}</label><input value="${esc(p.time)}" placeholder="e.g. 2 hours" oninput="PG.paper.time=this.value"></div>
+    ${both ? `<div class="row-2"><div class="field"><label>Objective paper time</label><input value="${esc(p.timeObj||'')}" placeholder="e.g. 20 minutes" oninput="PG.paper.timeObj=this.value"></div><div class="field"><label>Subjective paper time</label><input value="${esc(p.timeSub||'')}" placeholder="e.g. 1 hour 40 minutes" oninput="PG.paper.timeSub=this.value"></div></div>` : ''}
     ${pgOrder(p).map(t=>{
       const qs = p.sections[t] || [];
       if(!qs.length) return '';
       const pool = PG.bank.filter(q=>q.type===t && !inPaper.has(q.id) && pgSameLang(q,p));
-      return `<div style="margin-top:14px;"><div style="font-weight:700;color:var(--navy-900);margin-bottom:6px;display:flex;gap:6px;align-items:center;">${esc(PG_TYPE_LABEL[t])} <button type="button" class="tag-btn ghost" style="padding:1px 8px;font-size:12px;" title="Move section up" onclick="pgMoveSec('${t}',-1)">&uarr;</button><button type="button" class="tag-btn ghost" style="padding:1px 8px;font-size:12px;" title="Move section down" onclick="pgMoveSec('${t}',1)">&darr;</button></div>
+      const part = PG_OBJ_TYPES.includes(t) ? 'obj' : 'sub'; let hdr = '';
+      if(both && part!==lastPart){ lastPart = part; const sm = pgPaperTotal(pgPart(p,part)); hdr = `<div style="margin-top:20px;background:var(--navy-900);color:#fff;border-radius:6px;padding:7px 12px;font-weight:700;">${part==='obj'?'OBJECTIVE PAPER (MCQs etc.)':'SUBJECTIVE PAPER (Short / Long)'} <small style="font-weight:400;">&mdash; marks: ${sm}</small></div>`; }
+      return `${hdr}<div style="margin-top:14px;"><div style="font-weight:700;color:var(--navy-900);margin-bottom:6px;display:flex;gap:6px;align-items:center;">${esc(PG_TYPE_LABEL[t])} <button type="button" class="tag-btn ghost" style="padding:1px 8px;font-size:12px;" title="Move section up" onclick="pgMoveSec('${t}',-1)">&uarr;</button><button type="button" class="tag-btn ghost" style="padding:1px 8px;font-size:12px;" title="Move section down" onclick="pgMoveSec('${t}',1)">&darr;</button></div>
         ${qs.map((q,i)=>{ n++; return `
         <div style="border:1px solid var(--line);border-radius:6px;padding:10px;margin-bottom:8px;background:#fff;">
           <div style="display:flex;gap:8px;align-items:flex-start;">
@@ -5053,8 +5069,12 @@ function pgRenderPaper(){
         </div>`; }).join('')}</div>`;
     }).join('')}
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:16px;">
-      <button type="button" class="btn-gold" onclick="pgPrint()">Print / Save as PDF</button>
-      <button type="button" class="tag-btn" onclick="pgPrintKey()">Print Answer Key</button>
+      ${both ? `<button type="button" class="btn-gold" onclick="pgPrint('obj')">Print Objective Paper</button>
+      <button type="button" class="btn-gold" onclick="pgPrint('sub')">Print Subjective Paper</button>
+      <button type="button" class="tag-btn" onclick="pgPrintKey('obj')">Objective Answer Key</button>
+      <button type="button" class="tag-btn" onclick="pgPrintKey('sub')">Subjective Answer Key</button>
+      <button type="button" class="tag-btn ghost" onclick="pgPrint()">Print both together</button>` : `<button type="button" class="btn-gold" onclick="pgPrint()">Print / Save as PDF</button>
+      <button type="button" class="tag-btn" onclick="pgPrintKey()">Print Answer Key</button>`}
       <button type="button" class="tag-btn" onclick="pgSavePaper()">Save Paper</button>
       <button type="button" class="tag-btn ghost" onclick="PG.paper=null;renderPaperGenerator()">Close Paper</button>
     </div>
@@ -5159,20 +5179,21 @@ function pgStuPanelHTML(p){
     <div class="row-2"><div class="field"><label>Session of the students</label><input value="${esc(S.session)}" onchange="PG.stu.session=this.value.trim();PG.stu.sel={};pgRenderPaper()"></div>
     <div class="field" style="display:flex;gap:8px;align-items:flex-end;"><button type="button" class="tag-btn" onclick="pgStuAll(true)">Select all</button><button type="button" class="tag-btn ghost" onclick="pgStuAll(false)">Select none</button></div></div>
     ${r.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:4px 12px;margin:8px 0 12px;">${r.map(x=>`<label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:0;"><input type="checkbox" style="width:auto;" ${S.sel[x.st.id]?'checked':''} onchange="PG.stu.sel['${x.st.id}']=this.checked;pgStuCount()"> <span class="mono">${esc(x.e.rollNo)}</span> ${esc(x.st.name)}</label>`).join('')}</div>
-    <button type="button" class="btn-gold" onclick="pgPrintStudents()">Print papers for selected students (<span id="pgStuCnt">${r.filter(x=>S.sel[x.st.id]).length}</span>)</button>` : `<div class="empty">No students are enrolled in ${esc(p.cls)} for session ${esc(S.session)}.</div>`}
+    <p style="margin:0 0 8px;font-weight:600;">Selected students: <span id="pgStuCnt">${r.filter(x=>S.sel[x.st.id]).length}</span></p>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;">${pgHasBoth(p) ? `<button type="button" class="btn-gold" onclick="pgPrintStudents('obj')">Print Objective papers</button><button type="button" class="btn-gold" onclick="pgPrintStudents('sub')">Print Subjective papers</button><button type="button" class="tag-btn ghost" onclick="pgPrintStudents()">Print both together</button>` : `<button type="button" class="btn-gold" onclick="pgPrintStudents()">Print papers for selected students</button>`}</div>` : `<div class="empty">No students are enrolled in ${esc(p.cls)} for session ${esc(S.session)}.</div>`}
   </div>`;
 }
-function pgPrintStudents(){
+function pgPrintStudents(part){
   if(!pgOK() || !PG.paper) return;
-  const p = PG.paper, picked = pgStuRoster(p).filter(x=>PG.stu.sel[x.st.id]);
+  const p = part ? pgPart(PG.paper, part) : PG.paper, picked = pgStuRoster(p).filter(x=>PG.stu.sel[x.st.id]);
   if(!picked.length){ alert('Select at least one student first.'); return; }
   const body = pgPaperHTML(p, true);
   printHTML(picked.map(x=>`<div style="page-break-after:always;">${pgCoverHTML(p, x.st, x.e)}</div><div style="page-break-after:always;">${body}</div>`).join(''));
 }
 
-function pgPrintKey(){
+function pgPrintKey(part){
   if(!pgOK() || !PG.paper) return;
-  const p = PG.paper; let n = 0;
+  const p = part ? pgPart(PG.paper, part) : PG.paper; let n = 0;
   const lbl = new Map();
   { let qn = 0; pgOrder(p).forEach(t=>{ const qs = p.sections[t]||[]; if(!qs.length) return; qn++; qs.forEach((q,i)=>lbl.set(q,'Q.'+qn+' '+pgRoman(i)+')')); }); }
   const rows = pgOrder(p).flatMap(t=>p.sections[t]||[]).map(q=>{
@@ -5184,7 +5205,7 @@ function pgPrintKey(){
   }).join('');
   printHTML(`<div style="font-family:'Times New Roman',serif;color:#000;font-size:14px;line-height:1.5;">${schoolBrandHTML('Answer Key — '+(p.exam||'Examination Paper'))}<p style="font-size:13px;"><b>Class:</b> ${esc(p.cls)} &nbsp; <b>Subject:</b> ${esc(p.subject)}</p>${rows}</div>`);
 }
-function pgPrint(){ if(!pgOK() || !PG.paper) return; printHTML(pgPaperHTML(PG.paper)); }
+function pgPrint(part){ if(!pgOK() || !PG.paper) return; printHTML(pgPaperHTML(part ? pgPart(PG.paper, part) : PG.paper)); }
 async function pgSavePaper(){
   if(!pgOK() || !PG.paper) return;
   const p = PG.paper;
@@ -6016,7 +6037,7 @@ function pgAutoHTML(){
       <button type="button" class="btn-gold" onclick="pgGenerateAuto()">Generate</button>
       ${PG.paper ? '<button type="button" class="tag-btn" onclick="pgGenerateAuto()">&#8635; Generate again</button>' : ''}
     </div>
-    <p class="note-inline" style="margin-top:8px;">The test opens below. You can Replace any question, edit it, then Print.</p>`;
+    <p class="note-inline" style="margin-top:8px;">The test opens below. You can Replace any question, edit it, then Print. If the test has both MCQ-type and Short/Long questions, it prints as <b>two separate papers</b>: an Objective paper and a Subjective paper (each with its own time, answer key and student covers).</p>`;
 }
 function pgGenerateAuto(){
   if(!pgOK()) return;
