@@ -5188,7 +5188,8 @@ function pgPrintStudents(part){
   const p = part ? pgPart(PG.paper, part) : PG.paper, picked = pgStuRoster(p).filter(x=>PG.stu.sel[x.st.id]);
   if(!picked.length){ alert('Select at least one student first.'); return; }
   const body = pgPaperHTML(p, true);
-  printHTML(picked.map(x=>`<div style="page-break-after:always;">${pgCoverHTML(p, x.st, x.e)}</div><div style="page-break-after:always;">${body}</div>`).join(''));
+  /* cover (+ MCQ bubble sheet) and the questions share ONE page; only a new student starts a new page */
+  printHTML(picked.map((x,i)=>`<div style="${i<picked.length-1?'page-break-after:always;':''}">${pgCoverHTML(p, x.st, x.e)}<div style="margin-top:8px;">${body}</div></div>`).join(''));
 }
 
 function pgPrintKey(part){
