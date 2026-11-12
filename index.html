@@ -5108,10 +5108,11 @@ function pgPaperHTML(p, bare){
   const sections = pgOrder(p).filter(t=>(p.sections[t]||[]).length).map((t,si)=>{
     const qs = p.sections[t];
     const sum = qs.reduce((a,q)=>a+(+q.marks||0),0);
-    return `<div style="margin-top:16px;">
+    const big = t==='MCQ' && p.mcqBig;
+    return `<div style="margin-top:${big?10:16}px;${big?'font-size:17px;line-height:1.5;':''}">
       <div style="font-weight:700;border-bottom:1px solid #000;padding-bottom:3px;margin-bottom:6px;display:flex;justify-content:space-between;gap:10px;"><span>${ur?'سوال':'Q.'} ${++qn} &mdash; ${esc(ur?PG_LABEL_UR[t]:PG_TYPE_LABEL[t])}</span>${both?`<span dir="rtl" style="${F}">${esc(PG_LABEL_UR[t])}</span>`:''}<span>${W.mk}: ${sum}</span></div>
       <div style="font-style:italic;font-size:12.5px;margin-bottom:6px;display:flex;justify-content:space-between;gap:10px;"><span>${esc(ur?PG_INSTR_UR[t]:(PG_TYPE_INSTR[t]||''))}</span>${both?`<span dir="rtl" style="${F}">${esc(PG_INSTR_UR[t]||'')}</span>`:''}</div>
-      ${qs.map((q,i)=>`<div style="margin-bottom:9px;page-break-inside:avoid;">${pgQBody(q,m,pgRoman(i)+')')}</div>`).join('')}
+      ${qs.map((q,i)=>`<div style="margin-bottom:${big?11:9}px;page-break-inside:avoid;">${pgQBody(q,m,pgRoman(i)+')')}</div>`).join('')}
     </div>`;
   }).join('');
   return `<div ${ur?'dir="rtl"':''} style="font-family:${ur?PG_UR_FONT+',':''}'Times New Roman',serif;color:#000;font-size:14px;line-height:${ur?2.1:1.5};">
@@ -5129,10 +5130,10 @@ function pgCoverHTML(p, st, en){
   const nav = '#12307b', gold = '#e8a900', lb = '#cfe3f7', mcq = (p.sections.MCQ || []).length;
   const bx = `border:1.5px solid ${nav};border-radius:10px;`;
   const line = (label, val) => `<div style="display:flex;align-items:baseline;gap:6px;margin:5px 0;font-weight:700;font-size:13px;"><span>${label}</span><span style="flex:1;border-bottom:1.5px solid #000;min-height:16px;font-weight:600;padding:0 4px;">${esc(val||'')}</span></div>`;
-  const dot = `<span style="display:inline-block;width:14px;height:14px;border:1.5px solid ${nav};border-radius:50%;vertical-align:middle;"></span>`;
+  const dot = `<span style="display:inline-block;width:11px;height:11px;border:1.2px solid ${nav};border-radius:50%;vertical-align:middle;"></span>`;
   const perCol = mcq <= 12 ? mcq : Math.ceil(mcq/2);
-  const table = (from, to) => `<table style="border-collapse:collapse;width:100%;font-size:13px;text-align:center;border:1.5px solid ${nav};"><tr style="background:${lb};font-weight:700;">${['Q.No','A','B','C','D'].map(h=>`<th style="border:1px solid ${nav};padding:2px 0;">${h}</th>`).join('')}</tr>${Array.from({length:to-from+1},(_,i)=>`<tr><td style="border:1px solid ${nav};font-weight:700;height:21px;">${from+i}</td>${[1,2,3,4].map(()=>`<td style="border:1px solid ${nav};">${dot}</td>`).join('')}</tr>`).join('')}</table>`;
-  const bubbles = mcq ? `<div style="background:${nav};color:#fff;border-radius:10px;text-align:center;font-family:'Playfair Display',serif;font-weight:700;font-size:20px;padding:5px;margin:12px 0 8px;">MCQs Answer Sheet</div>
+  const table = (from, to) => `<table style="border-collapse:collapse;width:100%;font-size:11px;text-align:center;border:1.2px solid ${nav};"><tr style="background:${lb};font-weight:700;">${['Q.No','A','B','C','D'].map(h=>`<th style="border:1px solid ${nav};padding:0;line-height:1.2;">${h}</th>`).join('')}</tr>${Array.from({length:to-from+1},(_,i)=>`<tr><td style="border:1px solid ${nav};font-weight:700;height:15px;line-height:1;">${from+i}</td>${[1,2,3,4].map(()=>`<td style="border:1px solid ${nav};">${dot}</td>`).join('')}</tr>`).join('')}</table>`;
+  const bubbles = mcq ? `<div style="background:${nav};color:#fff;border-radius:10px;text-align:center;font-family:'Playfair Display',serif;font-weight:700;font-size:14px;padding:3px;margin:8px 0 5px;">MCQs Answer Sheet</div>
     <div style="display:flex;gap:14px;align-items:flex-start;"><div style="flex:1;">${table(1, perCol)}</div>${mcq > perCol ? `<div style="flex:1;padding-left:16px;">${table(perCol+1, mcq)}</div>` : ''}</div>` : '';
   return `<div style="font-family:'Times New Roman',serif;color:#000;">
     <div style="background:${nav};color:#fff;border-radius:14px;padding:10px 12px;display:flex;align-items:center;gap:10px;">
@@ -5152,6 +5153,7 @@ function pgCoverHTML(p, st, en){
         ${line('Subject:', p.subject)}${line('Date:', p.date ? fmtDate(p.date) : '')}
       </div>
       <div style="width:36%;padding:6px 12px;font-weight:700;font-size:13px;">
+        ${p.code ? `<div style="display:flex;align-items:center;justify-content:space-between;margin:4px 0;"><span>Paper Code:</span><span style="${bx}min-width:64px;height:30px;display:inline-flex;align-items:center;justify-content:center;font-size:20px;">${p.code}</span></div>` : ''}
         <div style="display:flex;align-items:center;justify-content:space-between;margin:6px 0;"><span>Total Marks:</span><span style="${bx}min-width:64px;height:34px;display:inline-flex;align-items:center;justify-content:center;font-size:17px;">${pgPaperTotal(p)}</span></div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin:10px 0 6px;"><span>Obtained Marks:</span><span style="${bx}min-width:64px;height:34px;display:inline-block;"></span></div>
       </div>
@@ -5162,7 +5164,7 @@ function pgCoverHTML(p, st, en){
       <div style="width:26%;padding:6px 10px;text-align:center;">School Stamp:<div style="width:42px;height:42px;border:1.5px solid ${nav};border-radius:50%;margin:3px auto 0;"></div></div>
     </div>
     ${bubbles}
-    <div style="background:${nav};color:#fff;border-radius:10px;text-align:center;font-style:italic;font-weight:700;font-size:18px;padding:5px;margin-top:12px;">Best of Luck!</div>
+    <div style="background:${nav};color:#fff;border-radius:10px;text-align:center;font-style:italic;font-weight:700;font-size:14px;padding:3px;margin-top:8px;">Best of Luck!</div>
   </div>`;
 }
 function pgStuRoster(p){
@@ -5175,7 +5177,7 @@ function pgStuAll(on){ PG.stu.sel = {}; if(on) pgStuRoster(PG.paper).forEach(x=>
 function pgStuPanelHTML(p){
   const r = pgStuRoster(p), S = PG.stu, mcq = (p.sections.MCQ || []).length;
   return `<div class="admin-block" style="margin-top:18px;background:#fff;"><h3 style="font-size:15px;">Papers for students (cover + MCQ bubble sheet)</h3>
-    <p class="note-inline" style="margin:-4px 0 10px;">Each selected student gets their own printed paper: a cover with their name, class and roll no, the total marks (${pgPaperTotal(p)}), empty boxes for obtained marks and signatures, a bubble sheet for the ${mcq} MCQ(s), and then the questions. Exam name above (e.g. 2nd Term) is printed on the cover.</p>
+    <p class="note-inline" style="margin:-4px 0 10px;">Each selected student gets their own printed paper: a cover with their name, class and roll no, the total marks (${pgPaperTotal(p)}), empty boxes for obtained marks and signatures, a small bubble sheet for the ${mcq} MCQ(s) and then the questions on the same page, with larger MCQ text. Every student also gets a <b>Paper Code (1 to 5)</b> with a different MCQ order; student 6 gets code 1 again, student 7 gets code 2, and so on. The Answer Key prints the answers for every code. Exam name above (e.g. 2nd Term) is printed on the cover.</p>
     <div class="row-2"><div class="field"><label>Session of the students</label><input value="${esc(S.session)}" onchange="PG.stu.session=this.value.trim();PG.stu.sel={};pgRenderPaper()"></div>
     <div class="field" style="display:flex;gap:8px;align-items:flex-end;"><button type="button" class="tag-btn" onclick="pgStuAll(true)">Select all</button><button type="button" class="tag-btn ghost" onclick="pgStuAll(false)">Select none</button></div></div>
     ${r.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:4px 12px;margin:8px 0 12px;">${r.map(x=>`<label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:0;"><input type="checkbox" style="width:auto;" ${S.sel[x.st.id]?'checked':''} onchange="PG.stu.sel['${x.st.id}']=this.checked;pgStuCount()"> <span class="mono">${esc(x.e.rollNo)}</span> ${esc(x.st.name)}</label>`).join('')}</div>
@@ -5183,13 +5185,44 @@ function pgStuPanelHTML(p){
     <div style="display:flex;flex-wrap:wrap;gap:8px;">${pgHasBoth(p) ? `<button type="button" class="btn-gold" onclick="pgPrintStudents('obj')">Print Objective papers</button><button type="button" class="btn-gold" onclick="pgPrintStudents('sub')">Print Subjective papers</button><button type="button" class="tag-btn ghost" onclick="pgPrintStudents()">Print both together</button>` : `<button type="button" class="btn-gold" onclick="pgPrintStudents()">Print papers for selected students</button>`}</div>` : `<div class="empty">No students are enrolled in ${esc(p.cls)} for session ${esc(S.session)}.</div>`}
   </div>`;
 }
+/* ---------------- PAPER CODES: 5 versions with different MCQ order; student 6 gets code 1 again, 7 gets 2 ... ---------------- */
+const PG_VERSIONS = 5;
+function pgRng(seed){ let a = seed>>>0; return ()=>{ a=(a+0x6D2B79F5)>>>0; let t=a; t=Math.imul(t^(t>>>15),t|1); t^=t+Math.imul(t^(t>>>7),t|61); return ((t^(t>>>14))>>>0)/4294967296; }; }
+function pgVersionPerms(p){
+  const mcq = p.sections.MCQ || [], n = mcq.length, base = [p.cls,p.subject,p.exam,mcq.map(q=>q.id).join(',')].join('|');
+  const out = [], seen = new Set();
+  for(let v=0; v<PG_VERSIONS; v++){
+    let perm, tries = 0;
+    do {
+      const rnd = pgRng(parseInt(pgHash(base+'#'+v+'#'+tries),36) || (v+1));
+      perm = Array.from({length:n},(_,i)=>i);
+      for(let i=n-1;i>0;i--){ const j=Math.floor(rnd()*(i+1)); [perm[i],perm[j]]=[perm[j],perm[i]]; }
+      tries++;
+    } while(n>=3 && seen.has(perm.join(',')) && tries<60);
+    seen.add(perm.join(',')); out.push(perm);
+  }
+  return out;
+}
+function pgVersioned(p, code){            /* code = 1..5 */
+  const mcq = p.sections.MCQ || [];
+  if(mcq.length < 2) return { ...p, mcqBig:true };
+  const perm = pgVersionPerms(p)[code-1];
+  return { ...p, code, mcqBig:true, sections:{ ...p.sections, MCQ: perm.map(i=>mcq[i]) } };
+}
+function pgAnsLetter(a){ const t = String(a||'').trim(); const m = t.match(/^\(?\s*([A-Da-d])\s*[\)\.\:\-]?(\s|$)/); return m ? m[1].toUpperCase() : (t ? t.slice(0,14) : '?'); }
 function pgPrintStudents(part){
   if(!pgOK() || !PG.paper) return;
   const p = part ? pgPart(PG.paper, part) : PG.paper, picked = pgStuRoster(p).filter(x=>PG.stu.sel[x.st.id]);
   if(!picked.length){ alert('Select at least one student first.'); return; }
-  const body = pgPaperHTML(p, true);
-  /* cover (+ MCQ bubble sheet) and the questions share ONE page; only a new student starts a new page */
-  printHTML(picked.map((x,i)=>`<div style="${i<picked.length-1?'page-break-after:always;':''}">${pgCoverHTML(p, x.st, x.e)}<div style="margin-top:8px;">${body}</div></div>`).join(''));
+  const hasMcq = (p.sections.MCQ||[]).length >= 2, bodies = {};
+  /* cover (+ small MCQ bubble sheet) and the questions share ONE page; only a new student starts a new page.
+     Paper code cycles 1..5 so neighbouring students never get the same MCQ order. */
+  printHTML(picked.map((x,i)=>{
+    const code = (i % PG_VERSIONS) + 1, pv = pgVersioned(p, code);
+    const key = hasMcq ? code : 0;
+    if(!bodies[key]) bodies[key] = pgPaperHTML(pv, true);
+    return `<div style="${i<picked.length-1?'page-break-after:always;':''}">${pgCoverHTML(pv, x.st, x.e)}<div style="margin-top:8px;">${bodies[key]}</div></div>`;
+  }).join(''));
 }
 
 function pgPrintKey(part){
@@ -5204,7 +5237,13 @@ function pgPrintKey(part){
     else ans = q.answer ? esc(q.answer) : '<i>not provided</i>';
     return `<div style="margin-bottom:10px;page-break-inside:avoid;"><b>${lbl.get(q)||('Q'+n+'.')}</b> <span dir="auto" style="white-space:pre-line;">${esc(pgShort(q.text,160))}</span><div dir="auto" style="margin:3px 0 0 28px;white-space:pre-line;"><b>Ans:</b> ${ans}</div></div>`;
   }).join('');
-  printHTML(`<div style="font-family:'Times New Roman',serif;color:#000;font-size:14px;line-height:1.5;">${schoolBrandHTML('Answer Key — '+(p.exam||'Examination Paper'))}<p style="font-size:13px;"><b>Class:</b> ${esc(p.cls)} &nbsp; <b>Subject:</b> ${esc(p.subject)}</p>${rows}</div>`);
+  let codeKeys = '';
+  const mq = p.sections.MCQ || [];
+  if(mq.length >= 2){
+    const perms = pgVersionPerms(p);
+    codeKeys = `<div style="margin-top:18px;page-break-inside:avoid;"><div style="font-weight:700;border-bottom:1px solid #000;margin-bottom:6px;">MCQs answer key by Paper Code (student papers)</div>${perms.map((pm,vi)=>`<div style="margin-bottom:8px;font-size:13px;"><b>Paper Code ${vi+1}:</b> ${pm.map((qi,k)=>`<span style="display:inline-block;min-width:54px;"><b>${k+1}</b>-${esc(pgAnsLetter(mq[qi].answer))}</span>`).join(' ')}</div>`).join('')}</div>`;
+  }
+  printHTML(`<div style="font-family:'Times New Roman',serif;color:#000;font-size:14px;line-height:1.5;">${schoolBrandHTML('Answer Key — '+(p.exam||'Examination Paper'))}<p style="font-size:13px;"><b>Class:</b> ${esc(p.cls)} &nbsp; <b>Subject:</b> ${esc(p.subject)}</p>${rows}${codeKeys}</div>`);
 }
 function pgPrint(part){ if(!pgOK() || !PG.paper) return; printHTML(pgPaperHTML(part ? pgPart(PG.paper, part) : PG.paper)); }
 async function pgSavePaper(){
