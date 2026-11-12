@@ -247,9 +247,12 @@
     #printArea, #printArea *{ visibility:visible; }
     #printArea{ display:block !important; position:static; width:100%; padding:20px; }
     #printArea:has(.idcard-sheet){ padding:0; }
+    #printArea:has(.pg-stu-sheet){ padding:0; }
+    #printArea .pg-stu-sheet{ page:stu; }
     #printArea .idcard-sheet{ page:cards; grid-template-columns:repeat(2,86mm); gap:2.5mm 4mm; justify-content:center; }
   }
   @page cards{ size:A4 portrait; margin:6mm; }
+  @page stu{ size:A4 portrait; margin:8mm; }
   @media(max-width:640px){
     .row-2{grid-template-columns:1fr;}
   }
@@ -5105,17 +5108,20 @@ function pgPaperHTML(p, bare){
   const F = 'font-family:'+PG_UR_FONT+';line-height:2;';
   const W = ur ? { cls:'جماعت', sub:'مضمون', tm:'کل نمبر', dt:'تاریخ', tt:'وقت', sec:'حصہ', mk:'نمبر', q:'سوال ' } : { cls:'Class', sub:'Subject', tm:'Total Marks', dt:'Date', tt:'Time', sec:'Section', mk:'Marks', q:'Q' };
   let n = 0, qn = 0;
+  const cp = !!p.compact;
+  PG_INLINE_MCQ = cp;
   const sections = pgOrder(p).filter(t=>(p.sections[t]||[]).length).map((t,si)=>{
     const qs = p.sections[t];
     const sum = qs.reduce((a,q)=>a+(+q.marks||0),0);
     const big = t==='MCQ' && p.mcqBig;
-    return `<div style="margin-top:${big?10:16}px;${big?'font-size:17px;line-height:1.5;':''}">
-      <div style="font-weight:700;border-bottom:1px solid #000;padding-bottom:3px;margin-bottom:6px;display:flex;justify-content:space-between;gap:10px;"><span>${ur?'سوال':'Q.'} ${++qn} &mdash; ${esc(ur?PG_LABEL_UR[t]:PG_TYPE_LABEL[t])}</span>${both?`<span dir="rtl" style="${F}">${esc(PG_LABEL_UR[t])}</span>`:''}<span>${W.mk}: ${sum}</span></div>
-      <div style="font-style:italic;font-size:12.5px;margin-bottom:6px;display:flex;justify-content:space-between;gap:10px;"><span>${esc(ur?PG_INSTR_UR[t]:(PG_TYPE_INSTR[t]||''))}</span>${both?`<span dir="rtl" style="${F}">${esc(PG_INSTR_UR[t]||'')}</span>`:''}</div>
-      ${qs.map((q,i)=>`<div style="margin-bottom:${big?11:9}px;page-break-inside:avoid;">${pgQBody(q,m,pgRoman(i)+')')}</div>`).join('')}
+    return `<div style="margin-top:${cp?9:(big?10:16)}px;${big?(cp?'font-size:14.5px;line-height:1.3;':'font-size:17px;line-height:1.5;'):''}">
+      <div style="font-weight:700;border-bottom:1px solid #000;padding-bottom:2px;margin-bottom:${cp?3:6}px;break-after:avoid;page-break-after:avoid;display:flex;justify-content:space-between;gap:10px;"><span>${ur?'سوال':'Q.'} ${++qn} &mdash; ${esc(ur?PG_LABEL_UR[t]:PG_TYPE_LABEL[t])}</span>${both?`<span dir="rtl" style="${F}">${esc(PG_LABEL_UR[t])}</span>`:''}<span>${W.mk}: ${sum}</span></div>
+      <div style="font-style:italic;font-size:${cp?11.5:12.5}px;margin-bottom:${cp?3:6}px;break-after:avoid;page-break-after:avoid;display:flex;justify-content:space-between;gap:10px;"><span>${esc(ur?PG_INSTR_UR[t]:(PG_TYPE_INSTR[t]||''))}</span>${both?`<span dir="rtl" style="${F}">${esc(PG_INSTR_UR[t]||'')}</span>`:''}</div>
+      ${qs.map((q,i)=>`<div style="margin-bottom:${cp?5:(big?11:9)}px;${t==='Match'?'':'page-break-inside:avoid;'}">${pgQBody(q,m,pgRoman(i)+')')}</div>`).join('')}
     </div>`;
   }).join('');
-  return `<div ${ur?'dir="rtl"':''} style="font-family:${ur?PG_UR_FONT+',':''}'Times New Roman',serif;color:#000;font-size:14px;line-height:${ur?2.1:1.5};">
+  PG_INLINE_MCQ = false;
+  return `<div ${ur?'dir="rtl"':''} style="font-family:${ur?PG_UR_FONT+',':''}'Times New Roman',serif;color:#000;font-size:${cp?12.5:14}px;line-height:${ur?(cp?1.9:2.1):(cp?1.3:1.5)};">
     ${bare ? '' : schoolBrandHTML(p.exam || 'Examination Paper')}
     ${bare ? '' : `<table style="width:100%;border-collapse:collapse;margin-bottom:6px;font-size:13px;">
       <tr><td><b>${W.cls}:</b> ${esc(p.cls)}</td><td><b>${W.sub}:</b> ${esc(p.subject)}</td><td><b>${W.tm}:</b> ${pgPaperTotal(p)}</td></tr>
@@ -5167,6 +5173,43 @@ function pgCoverHTML(p, st, en){
     <div style="background:${nav};color:#fff;border-radius:10px;text-align:center;font-style:italic;font-weight:700;font-size:14px;padding:3px;margin-top:8px;">Best of Luck!</div>
   </div>`;
 }
+function pgCoverCompactHTML(p, st, en){
+  const nav = '#12307b', gold = '#e8a900', lb = '#cfe3f7', mcq = (p.sections.MCQ || []).length;
+  const bx = `border:1.2px solid ${nav};border-radius:6px;`, cls = PG_CLASS_LABEL[p.cls] || p.cls;
+  const line = (label, val) => `<div style="display:flex;align-items:baseline;gap:5px;margin:2px 0;font-weight:700;font-size:11.5px;"><span>${label}</span><span style="flex:1;border-bottom:1px solid #000;min-height:13px;font-weight:600;padding:0 3px;">${esc(val||'')}</span></div>`;
+  const dot = `<span style="display:inline-block;width:9px;height:9px;border:1px solid ${nav};border-radius:50%;vertical-align:middle;"></span>`;
+  const cols = mcq <= 5 ? 1 : (mcq <= 24 ? 2 : 3), per = Math.ceil(mcq/cols);
+  const table = (from, to) => `<table style="border-collapse:collapse;width:100%;font-size:10px;text-align:center;border:1px solid ${nav};"><tr style="background:${lb};font-weight:700;">${['Q','A','B','C','D'].map(h=>`<th style="border:1px solid ${nav};padding:0;line-height:1.15;">${h}</th>`).join('')}</tr>${Array.from({length:to-from+1},(_,i)=>`<tr><td style="border:1px solid ${nav};font-weight:700;height:12.5px;line-height:1;">${from+i}</td>${[1,2,3,4].map(()=>`<td style="border:1px solid ${nav};line-height:1;">${dot}</td>`).join('')}</tr>`).join('')}</table>`;
+  const bubbles = mcq ? `<div style="background:${nav};color:#fff;border-radius:6px;text-align:center;font-weight:700;font-size:11px;padding:1px;margin:5px 0 3px;">MCQs Answer Sheet</div>
+    <div style="display:flex;gap:8px;align-items:flex-start;">${Array.from({length:cols},(_,c)=>{ const a=c*per+1, b=Math.min(mcq,(c+1)*per); return a<=b ? `<div style="flex:1;">${table(a,b)}</div>` : ''; }).join('')}</div>` : '';
+  return `<div style="font-family:'Times New Roman',serif;color:#000;">
+    <div style="background:${nav};color:#fff;border-radius:8px;padding:5px 10px;display:flex;align-items:center;gap:10px;">
+      <img src="${SCHOOL_LOGO}" alt="" style="width:44px;height:auto;background:#fff;border-radius:6px;padding:2px;flex:none;">
+      <div style="flex:1;text-align:center;">
+        <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:20px;line-height:1.1;">Quaid High School KSK</div>
+        <div style="font-size:12px;font-weight:700;margin-top:2px;">Examination Paper &bull; <span style="background:#fff;color:${nav};border-radius:10px;padding:0 10px;">${esc(cls)}</span>${p.exam ? ` &bull; <span style="color:${gold};">${esc(p.exam)}</span>` : ''}</div>
+      </div>
+      ${p.code ? `<div style="flex:none;text-align:center;line-height:1.1;font-size:10px;font-weight:700;">Paper Code<div style="background:#fff;color:${nav};border-radius:6px;font-size:20px;padding:0 12px;margin-top:1px;">${p.code}</div></div>` : ''}
+    </div>
+    <div style="${bx}margin-top:5px;display:flex;">
+      <div style="flex:1;padding:3px 9px;border-right:1.2px solid ${nav};">
+        ${line('Student Name:', st.name)}
+        <div style="display:flex;gap:10px;"><div style="flex:1;">${line('Class:', cls)}</div><div style="flex:1;">${line('Roll No:', en.rollNo)}</div></div>
+        <div style="display:flex;gap:10px;"><div style="flex:1;">${line('Subject:', p.subject)}</div><div style="flex:1;">${line('Date:', p.date ? fmtDate(p.date) : '')}</div></div>
+      </div>
+      <div style="width:30%;padding:3px 9px;font-weight:700;font-size:11.5px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin:2px 0;"><span>Total Marks:</span><span style="${bx}min-width:46px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:14px;">${pgPaperTotal(p)}</span></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin:5px 0 2px;"><span>Obtained:</span><span style="${bx}min-width:46px;height:22px;display:inline-block;"></span></div>
+      </div>
+    </div>
+    <div style="${bx}margin-top:5px;display:flex;font-weight:700;font-size:11px;">
+      <div style="flex:1;padding:3px 8px;border-right:1.2px solid ${nav};height:32px;">Teacher&rsquo;s Signature:</div>
+      <div style="flex:1;padding:3px 8px;border-right:1.2px solid ${nav};">Principal&rsquo;s Signature:</div>
+      <div style="width:20%;padding:3px 8px;text-align:center;">Stamp</div>
+    </div>
+    ${bubbles}
+  </div>`;
+}
 function pgStuRoster(p){
   return DB.enrollments.filter(e=>e.session===PG.stu.session && e.className===p.cls)
     .sort((a,b)=>String(a.rollNo).localeCompare(String(b.rollNo), undefined, {numeric:true}))
@@ -5209,10 +5252,10 @@ function pgVersionPerms(p){          /* { MCQ:[perm x5], Fill:[...], TF:[...], M
 }
 function pgCanShuffle(p){ return PG_TYPES.some(t=>(p.sections[t]||[]).length >= 2); }
 function pgVersioned(p, code){            /* code = 1..5: every section's questions get their own order */
-  if(!pgCanShuffle(p)) return { ...p, mcqBig:true };
+  if(!pgCanShuffle(p)) return { ...p, mcqBig:true, compact:true };
   const perms = pgVersionPerms(p), sections = {};
   PG_TYPES.forEach(t=>{ const qs = p.sections[t] || []; sections[t] = qs.length>=2 ? perms[t][code-1].map(i=>qs[i]) : qs; });
-  return { ...p, code, mcqBig:true, sections };
+  return { ...p, code, mcqBig:true, compact:true, sections };
 }
 function pgAnsLetter(a){ const t = String(a||'').trim(); const m = t.match(/^\(?\s*([A-Da-d])\s*[\)\.\:\-]?(\s|$)/); return m ? m[1].toUpperCase() : (t ? t.slice(0,14) : '?'); }
 function pgPrintStudents(part){
@@ -5227,7 +5270,7 @@ function pgPrintStudents(part){
     const key = hasMcq ? code : 0;
     if(!bodies[key]) bodies[key] = pgPaperHTML(pv, true);
     const brk = (i>0 ? 'break-before:page;page-break-before:always;' : '') + (i<picked.length-1 ? 'break-after:page;page-break-after:always;' : '');
-    return `<div class="pg-stu-sheet" style="display:flow-root;${brk}">${pgCoverHTML(pv, x.st, x.e)}<div style="margin-top:8px;">${bodies[key]}</div></div>`;
+    return `<div class="pg-stu-sheet" style="display:flow-root;${brk}">${pgCoverCompactHTML(pv, x.st, x.e)}<div style="margin-top:4px;">${bodies[key]}</div></div>`;
   }).join(''));
 }
 
@@ -5949,12 +5992,22 @@ async function pgAiNew(type, idx){
   }catch(e){ console.error(e); alert(e.message||'Could not make a new question'); }
   pgRenderPaper();
 }
+let PG_INLINE_MCQ = false;
 function pgQOne(q, text){
+  if(q.type==='MCQ' && PG_INLINE_MCQ){
+    const lines = String(text).split('\n').map(l=>l.trim()).filter(Boolean), isOpt = l=>/^\(?[a-dA-D][\)\.]\s*\S/.test(l);
+    let k = lines.length; while(k>0 && isOpt(lines[k-1])) k--;
+    const opts = lines.slice(k);
+    if(opts.length>=2 && opts.length<=5 && k>=1){
+      const mx = Math.max(...opts.map(o=>o.length)), cols = mx<=16 ? Math.min(opts.length,4) : (mx<=38 ? 2 : 1);
+      return `<div dir="auto" style="white-space:pre-line;">${esc(lines.slice(0,k).join('\n'))}</div><div style="display:grid;grid-template-columns:repeat(${cols},1fr);gap:1px 14px;margin-top:1px;">${opts.map(o=>`<span dir="auto">${esc(o)}</span>`).join('')}</div>`;
+    }
+  }
   if(q.type==='Match'){
     const lines = String(text).split('\n').map(l=>l.trim()).filter(Boolean);
     const rows = lines.filter(l=>l.indexOf('||')>-1).map(l=>l.split('||').map(x=>x.trim()));
     const head = lines.filter(l=>l.indexOf('||')<0).join(' ');
-    if(rows.length) return `<div dir="auto">${esc(head)}</div><table style="width:100%;border-collapse:collapse;margin-top:4px;font-size:13px;" border="1" cellpadding="4"><tr><th style="width:50%;">Column A</th><th>Column B</th></tr>${rows.map(r=>`<tr><td dir="auto">${esc(r[0])}</td><td dir="auto">${esc(r[1]||'')}</td></tr>`).join('')}</table>`;
+    if(rows.length) return `<div dir="auto">${esc(head)}</div><table style="width:100%;border-collapse:collapse;margin-top:4px;font-size:13px;" border="1" cellpadding="4"><tr><th style="width:50%;">Column A</th><th>Column B</th></tr>${rows.map(r=>`<tr style="page-break-inside:avoid;"><td dir="auto">${esc(r[0])}</td><td dir="auto">${esc(r[1]||'')}</td></tr>`).join('')}</table>`;
   }
   return `<div dir="auto" style="white-space:pre-line;">${esc(text)}</div>`;
 }
