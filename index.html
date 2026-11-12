@@ -5220,13 +5220,14 @@ function pgPrintStudents(part){
   const p = part ? pgPart(PG.paper, part) : PG.paper, picked = pgStuRoster(p).filter(x=>PG.stu.sel[x.st.id]);
   if(!picked.length){ alert('Select at least one student first.'); return; }
   const hasMcq = pgCanShuffle(p), bodies = {};
-  /* cover (+ small MCQ bubble sheet) and the questions share ONE page; only a new student starts a new page.
+  /* cover (+ small MCQ bubble sheet) and the questions share ONE page; every student ALWAYS starts on a fresh page and a student's extra page never holds another student's data.
      Paper code cycles 1..5; every code has its own order of MCQs, Fill, True/False, Match, Short and Long questions. */
   printHTML(picked.map((x,i)=>{
     const code = (i % PG_VERSIONS) + 1, pv = pgVersioned(p, code);
     const key = hasMcq ? code : 0;
     if(!bodies[key]) bodies[key] = pgPaperHTML(pv, true);
-    return `<div style="${i<picked.length-1?'page-break-after:always;':''}">${pgCoverHTML(pv, x.st, x.e)}<div style="margin-top:8px;">${bodies[key]}</div></div>`;
+    const brk = (i>0 ? 'break-before:page;page-break-before:always;' : '') + (i<picked.length-1 ? 'break-after:page;page-break-after:always;' : '');
+    return `<div class="pg-stu-sheet" style="display:flow-root;${brk}">${pgCoverHTML(pv, x.st, x.e)}<div style="margin-top:8px;">${bodies[key]}</div></div>`;
   }).join(''));
 }
 
