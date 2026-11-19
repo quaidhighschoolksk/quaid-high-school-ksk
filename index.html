@@ -4644,11 +4644,12 @@ function pgBankExtraRead(){
 }
 
 async function pgLoadBank(){
-  PG.bank = []; PG.src = [];
+  PG.bank = []; PG.src = []; PG.syl = [];
   if(!pgOK() || !PG.cls || !PG.subject) return;
   try{
     const d = await fsDb.collection(PG_COLLECTION).doc(pgKey()).get();
     PG.bank = d.exists ? (d.data().items || []) : [];
+    PG.syl = d.exists ? (d.data().syllabi || []) : [];
     const sd = await fsDb.collection(PG_COLLECTION).doc(pgSrcKey()).get();
     PG.src = sd.exists ? (sd.data().chapters || []) : [];
     const cd = await fsDb.collection(PG_COLLECTION).doc('config').get();
@@ -4657,7 +4658,7 @@ async function pgLoadBank(){
 }
 async function pgSaveBank(){
   if(!pgOK()) return false;
-  try{ await fsDb.collection(PG_COLLECTION).doc(pgKey()).set({ items: PG.bank, cls:PG.cls, subject:PG.subject }); return true; }
+  try{ await fsDb.collection(PG_COLLECTION).doc(pgKey()).set({ items: PG.bank, cls:PG.cls, subject:PG.subject, syllabi: PG.syl || [] }); return true; }
   catch(e){ console.error(e); pgSet('<div class="msg-err">Save failed: '+esc(e.message||'permission denied — check Firestore rules for paper_bank')+'</div>'); return false; }
 }
 
@@ -4723,6 +4724,11 @@ function pgRenderBody(){
   else if(PG.tab==='auto') b.innerHTML = pgAutoHTML();
 }
 function pgChapters(){ return [...new Set(PG.bank.map(q=>q.chapter||'').filter(Boolean))]; }
+/* ---- topics: every question can carry a Topic inside its Chapter ---- */
+const PG_TSEP = '\u241F';
+function pgTopicsOf(ch){ const seen = []; PG.bank.forEach(q=>{ if((q.chapter||'')===ch && q.topic && !seen.includes(q.topic)) seen.push(q.topic); }); return seen; }
+function pgAllTopics(){ const s = []; PG.bank.forEach(q=>{ if(q.topic && !s.includes(q.topic)) s.push(q.topic); }); (PG.src||[]).forEach(c=>(c.topics||[]).forEach(t=>{ if(!s.includes(t)) s.push(t); })); return s; }
+function pgTopicList(){ return `<datalist id="pgTopList">${pgAllTopics().map(t=>`<option value="${esc(t)}">`).join('')}</datalist>`; }
 function pgOpts(list, sel, blank){ return (blank!==undefined?`<option value="">${blank}</option>`:'') + list.map(x=>`<option ${x===sel?'selected':''}>${esc(x)}</option>`).join(''); }
 function pgShort(t,n){ t=(t||'').replace(/\s+/g,' '); return t.length>n ? t.slice(0,n)+'…' : t; }
 
@@ -4747,6 +4753,7 @@ function pgBankHTML(){
         <div class="field"><label>Chapter / Unit</label><input id="pgqChapter" value="${e?esc(e.chapter||''):''}" placeholder="e.g. Chapter 3: Motion"></div>
         <div class="field"><label>Marks</label><input id="pgqMarks" type="number" min="0.5" step="0.5" value="${e?esc(e.marks):''}" placeholder="default by type"></div>
       </div>
+      <div class="field"><label>Topic (optional &mdash; a part of the chapter)</label><input id="pgqTopic" list="pgTopList" dir="auto" value="${e?esc(e.topic||''):''}" placeholder="e.g. Types of Motion">${pgTopicList()}</div>
       <button type="button" class="btn-gold" onclick="pgSaveQuestion()">${e?'Update Question':'Add to Bank'}</button>
       ${e?'<button type="button" class="tag-btn ghost" style="margin-left:8px;" onclick="PG.editId=\'\';pgRenderBody()">Cancel</button>':''}
     </div>
@@ -4759,7 +4766,7 @@ function pgBankHTML(){
     </div>
     ${list.length ? `<div style="overflow-x:auto;"><table>
       <tr><th>Question</th><th>Type</th><th>Source</th><th>Chapter</th><th>Marks</th><th>Used</th><th></th></tr>
-      ${list.map(q=>`<tr><td dir="auto" style="white-space:pre-line;min-width:240px;">${esc(pgShort(q.text,220))}${q.answer?`<details style="margin-top:4px;"><summary style="cursor:pointer;font-size:12px;color:var(--success);">&#10003; Solution</summary><div dir="auto" style="white-space:pre-line;font-size:13px;">${esc(q.answer)}</div></details>`:''}</td><td>${esc(q.type)}</td><td>${esc(q.source)}</td><td>${esc(q.chapter||'-')}</td><td>${esc(q.marks)}</td><td>${q.used||0}</td>
+      ${list.map(q=>`<tr><td dir="auto" style="white-space:pre-line;min-width:240px;">${esc(pgShort(q.text,220))}${q.answer?`<details style="margin-top:4px;"><summary style="cursor:pointer;font-size:12px;color:var(--success);">&#10003; Solution</summary><div dir="auto" style="white-space:pre-line;font-size:13px;">${esc(q.answer)}</div></details>`:''}</td><td>${esc(q.type)}</td><td>${esc(q.source)}</td><td>${esc(q.chapter||'-')}${q.topic?`<br><small style="color:var(--muted);">${esc(q.topic)}</small>`:''}</td><td>${esc(q.marks)}</td><td>${q.used||0}</td>
         <td style="white-space:nowrap;"><button type="button" class="tag-btn ghost" style="padding:4px 10px;font-size:12px;" onclick="PG.editId='${q.id}';pgRenderBody();document.getElementById('pgqText').scrollIntoView({behavior:'smooth',block:'center'})">Edit</button>
         <button type="button" class="tag-btn danger" style="padding:4px 10px;font-size:12px;" onclick="pgDeleteQuestion('${q.id}')">Delete</button></td></tr>`).join('')}
     </table></div>` : '<div class="empty">No questions yet for this filter.</div>'}`;
@@ -4771,6 +4778,7 @@ async function pgSaveQuestion(){
   const type = document.getElementById('pgqType').value;
   const rec = { text, type, source: document.getElementById('pgqSource').value,
     chapter: document.getElementById('pgqChapter').value.trim(),
+    topic: document.getElementById('pgqTopic').value.trim(),
     answer: document.getElementById('pgqAnswer').value.trim(),
     marks: parseFloat(document.getElementById('pgqMarks').value) || PG_DEFAULT_MARKS[type], ...pgBankExtraRead() };
   if(PG.editId){
@@ -4950,7 +4958,7 @@ async function pgExtract(){
 }
 function pgImportReviewHTML(){
   const chs = pgChapters();
-  return `
+  return `${pgTopicList()}
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin:14px 0;">
       <button type="button" class="btn-gold" onclick="pgSaveImported()">Save selected to Bank</button>
       <button type="button" class="tag-btn ghost" onclick="PG.imp.forEach(q=>q.keep=true);pgRenderBody()">Select all</button>
@@ -4967,6 +4975,7 @@ function pgImportReviewHTML(){
           <select onchange="PG.imp[${i}].type=this.value;PG.imp[${i}].marks=${'PG_DEFAULT_MARKS'}[this.value]">${pgOpts(PG_TYPES,q.type)}</select>
           <input type="number" min="0.5" step="0.5" value="${esc(q.marks)}" style="width:80px;padding:6px;border:1px solid var(--line);border-radius:6px;" oninput="PG.imp[${i}].marks=parseFloat(this.value)||1" title="Marks">
           <input value="${esc(q.chapter)}" placeholder="Chapter" style="flex:1;min-width:160px;padding:6px;border:1px solid var(--line);border-radius:6px;" oninput="PG.imp[${i}].chapter=this.value">
+          <input value="${esc(q.topic||'')}" list="pgTopList" placeholder="Topic (optional)" style="flex:1;min-width:140px;padding:6px;border:1px solid var(--line);border-radius:6px;" oninput="PG.imp[${i}].topic=this.value">
         </div>
       </div>`).join('')}`;
 }
@@ -4978,7 +4987,7 @@ async function pgSaveImported(){
   let added = 0;
   keep.forEach(q=>{
     if(have.has(q.text.trim().toLowerCase())) return;
-    PG.bank.push({ id: uid(), used:0, text:q.text.trim(), type:q.type, source:q.source, chapter:(q.chapter||'').trim(), marks:q.marks, answer:(q.answer||'').trim() });
+    PG.bank.push({ id: uid(), used:0, text:q.text.trim(), type:q.type, source:q.source, chapter:(q.chapter||'').trim(), topic:(q.topic||'').trim(), marks:q.marks, answer:(q.answer||'').trim() });
     added++;
   });
   const ok = await pgSaveBank();
@@ -5012,7 +5021,7 @@ function pgManualHTML(){
 }
 function pgNewPaper(sections, order, lang){
   if(!lang) lang = pgSenior(PG.cls) ? 'both' : (PG_TYPES.flatMap(t=>sections[t]||[]).every(q=>pgLangOf(q)==='ur') ? 'ur' : 'en');
-  return { id: uid(), lang, cls:PG.cls, subject:PG.subject, exam:'', date:new Date().toISOString().slice(0,10), time:'', sections, order: order || null };
+  return { id: uid(), testNo: pgNewTestNo(), lang, cls:PG.cls, subject:PG.subject, exam:'', date:new Date().toISOString().slice(0,10), time:'', sections, order: order || null };
 }
 function pgBuildManual(){
   if(!pgOK()) return;
@@ -5061,7 +5070,7 @@ function pgRenderPaper(){
           </div>
           ${pgUrBox(t,i,q,p)}${t==='TF'?pgTfPick(t,i,q):`<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:12px;color:var(--navy-900);">Answer / Solution ${q.answer?'&#10003;':'(none)'}</summary><textarea rows="3" dir="auto" style="width:100%;margin-top:4px;padding:8px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:13px;" oninput="PG.paper.sections['${t}'][${i}].answer=this.value">${esc(q.answer||'')}</textarea></details>`}
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center;">
-            <small style="color:var(--muted);">${esc(q.source)} &middot; ${esc(q.chapter||'no chapter')}</small>
+            <small style="color:var(--muted);">${esc(q.source)} &middot; ${esc(q.chapter||'no chapter')}${q.topic?' &middot; '+esc(q.topic):''}</small>
             <button type="button" class="tag-btn" style="padding:4px 10px;font-size:12px;" onclick="pgReplace('${t}',${i})">&#8635; Replace</button>
             <select style="max-width:240px;padding:4px;font-size:12px;border:1px solid var(--line);border-radius:6px;" onchange="if(this.value)pgReplaceWith('${t}',${i},this.value)">
               <option value="">Choose replacement&hellip;</option>
@@ -5090,7 +5099,7 @@ function pgReplace(type, idx){
   const pool = PG.bank.filter(q=>q.type===type && !inPaper.has(q.id) && pgSameLang(q,p));
   if(!pool.length){ alert('No other '+type+' questions are left in the bank to replace this one.'); return; }
   // prefer same source + same chapter, then same source, then anything
-  const tier = [pool.filter(q=>q.source===cur.source && q.chapter===cur.chapter), pool.filter(q=>q.source===cur.source), pool].find(a=>a.length);
+  const tier = [pool.filter(q=>cur.topic && q.chapter===cur.chapter && (q.topic||'')===cur.topic), pool.filter(q=>q.source===cur.source && q.chapter===cur.chapter), pool.filter(q=>q.source===cur.source), pool].find(a=>a.length);
   const pick = pgPickLeastUsed(tier, 1)[0];
   p.sections[type][idx] = { ...pick, marks: cur.marks };
   pgRenderPaper();
@@ -5122,10 +5131,15 @@ function pgPaperHTML(p, bare){
   }).join('');
   PG_INLINE_MCQ = false;
   return `<div ${ur?'dir="rtl"':''} style="font-family:${ur?PG_UR_FONT+',':''}'Times New Roman',serif;color:#000;font-size:${cp?12.5:14}px;line-height:${ur?(cp?1.9:2.1):(cp?1.3:1.5)};">
-    ${bare ? '' : schoolBrandHTML(p.exam || 'Examination Paper')}
-    ${bare ? '' : `<table style="width:100%;border-collapse:collapse;margin-bottom:6px;font-size:13px;">
-      <tr><td><b>${W.cls}:</b> ${esc(p.cls)}</td><td><b>${W.sub}:</b> ${esc(p.subject)}</td><td><b>${W.tm}:</b> ${pgPaperTotal(p)}</td></tr>
-      <tr><td><b>${W.dt}:</b> ${p.date?esc(fmtDate(p.date)):''}</td><td><b>${W.tt}:</b> ${esc(p.time||'')}</td><td></td></tr>
+    ${bare ? '' : `<div dir="ltr" style="display:flex;align-items:center;gap:14px;">
+      <img src="${SCHOOL_LOGO}" alt="" style="width:66px;height:auto;flex:none;">
+      <div style="flex:1;text-align:center;"><div style="font-family:'Playfair Display',serif;font-weight:800;font-size:27px;letter-spacing:.02em;text-transform:uppercase;line-height:1.15;">${esc(PG_SCHOOL.name)}</div>
+        <div style="font-weight:700;font-size:15px;margin-top:2px;">${esc(PG_SCHOOL.place)}, ${PG_SCHOOL.phones.map(esc).join(' ')}</div>
+        ${p.exam ? `<div style="font-weight:700;font-size:14px;margin-top:3px;">${esc(p.exam)}</div>` : ''}</div>
+    </div>
+    <table dir="${ur?'rtl':'ltr'}" style="width:100%;border-collapse:collapse;margin:8px 0 8px;font-size:13px;">
+      <tr><td style="border:1px solid #000;padding:4px 6px;width:34%;"><b>${ur?'\u0646\u0627\u0645':'Name'}:</b></td><td style="border:1px solid #000;padding:4px 6px;"><b>${ur?'\u0631\u0648\u0644 \u0646\u0645\u0628\u0631':'Roll #'}:</b></td><td style="border:1px solid #000;padding:4px 6px;"><b>${W.sub}:</b> ${esc(p.subject)}</td><td style="border:1px solid #000;padding:4px 6px;"><b>${ur?'\u0679\u06cc\u0633\u0679 \u0646\u0645\u0628\u0631':'Test #'}:</b> ${esc(p.testNo||'')}</td></tr>
+      <tr><td style="border:1px solid #000;padding:4px 6px;"><b>${W.cls}:</b> ${esc(PG_CLASS_LABEL[p.cls]||p.cls)}</td><td style="border:1px solid #000;padding:4px 6px;"><b>${W.tt}:</b> ${esc(p.time||'')}</td><td style="border:1px solid #000;padding:4px 6px;"><b>${W.tm}:</b> ${pgPaperTotal(p)}</td><td style="border:1px solid #000;padding:4px 6px;"><b>${W.dt}:</b> ${p.date?esc(fmtDate(p.date)):''}</td></tr>
     </table>`}
     ${sections}
   </div>`;
@@ -5186,8 +5200,9 @@ function pgCoverCompactHTML(p, st, en){
     <div style="background:${nav};color:#fff;border-radius:8px;padding:5px 10px;display:flex;align-items:center;gap:10px;">
       <img src="${SCHOOL_LOGO}" alt="" style="width:44px;height:auto;background:#fff;border-radius:6px;padding:2px;flex:none;">
       <div style="flex:1;text-align:center;">
-        <div style="font-family:'Playfair Display',serif;font-weight:700;font-size:20px;line-height:1.1;">Quaid High School KSK</div>
-        <div style="font-size:12px;font-weight:700;margin-top:2px;">Examination Paper &bull; <span style="background:#fff;color:${nav};border-radius:10px;padding:0 10px;">${esc(cls)}</span>${p.exam ? ` &bull; <span style="color:${gold};">${esc(p.exam)}</span>` : ''}</div>
+        <div style="font-family:'Playfair Display',serif;font-weight:800;font-size:20px;line-height:1.1;text-transform:uppercase;">${esc(PG_SCHOOL.name)}</div>
+        <div style="font-size:11px;font-weight:700;margin-top:1px;">${esc(PG_SCHOOL.place)}, ${PG_SCHOOL.phones.map(esc).join(' ')}</div>
+        <div style="font-size:12px;font-weight:700;margin-top:2px;">Examination Paper &bull; <span style="background:#fff;color:${nav};border-radius:10px;padding:0 10px;">${esc(cls)}</span>${p.exam ? ` &bull; <span style="color:${gold};">${esc(p.exam)}</span>` : ''}${p.testNo ? ` &bull; Test # ${esc(p.testNo)}` : ''}</div>
       </div>
       ${p.code ? `<div style="flex:none;text-align:center;line-height:1.1;font-size:10px;font-weight:700;">Paper Code<div style="background:#fff;color:${nav};border-radius:6px;font-size:20px;padding:0 12px;margin-top:1px;">${p.code}</div></div>` : ''}
     </div>
@@ -5259,7 +5274,7 @@ function pgVersioned(p, code){            /* code = 1..5: every section's questi
 }
 function pgAnsLetter(a){ const t = String(a||'').trim(); const m = t.match(/^\(?\s*([A-Da-d])\s*[\)\.\:\-]?(\s|$)/); return m ? m[1].toUpperCase() : (t ? t.slice(0,14) : '?'); }
 function pgPrintStudents(part){
-  if(!pgOK() || !PG.paper) return;
+  if(!pgOK() || !PG.paper) return; pgEnsureTestNo();
   const p = part ? pgPart(PG.paper, part) : PG.paper, picked = pgStuRoster(p).filter(x=>PG.stu.sel[x.st.id]);
   if(!picked.length){ alert('Select at least one student first.'); return; }
   const hasMcq = pgCanShuffle(p), bodies = {};
@@ -5287,7 +5302,7 @@ function pgKeyRows(p){
   }).join('');
 }
 function pgPrintKey(part){
-  if(!pgOK() || !PG.paper) return;
+  if(!pgOK() || !PG.paper) return; pgEnsureTestNo();
   const p = part ? pgPart(PG.paper, part) : PG.paper;
   const head = `${schoolBrandHTML('Answer Key — '+(p.exam||'Examination Paper'))}<p style="font-size:13px;"><b>Class:</b> ${esc(p.cls)} &nbsp; <b>Subject:</b> ${esc(p.subject)}</p>`;
   const wrap = h => `<div style="font-family:'Times New Roman',serif;color:#000;font-size:14px;line-height:1.5;">${h}</div>`;
@@ -5301,7 +5316,7 @@ function pgPrintKey(part){
   }
   printHTML(wrap(pages.join('')));
 }
-function pgPrint(part){ if(!pgOK() || !PG.paper) return; printHTML(pgPaperHTML(part ? pgPart(PG.paper, part) : PG.paper)); }
+function pgPrint(part){ if(!pgOK() || !PG.paper) return; pgEnsureTestNo(); printHTML(pgPaperHTML(part ? pgPart(PG.paper, part) : PG.paper)); }
 async function pgSavePaper(){
   if(!pgOK() || !PG.paper) return;
   const p = PG.paper;
@@ -5513,7 +5528,7 @@ async function pgGenerateAI(){
   const lang = document.getElementById('pgAiLang').value;
   const langLine = lang==='same' ? 'Write in the same language as the chapter text.' : 'Write everything in '+lang+'.';
   const system = 'You are an experienced school teacher setting exam questions for Class '+PG.cls+', subject '+PG.subject+'. Reply with ONLY a valid JSON array, no commentary, no markdown fences.';
-  const user = `CHAPTER TEXT:\n${text.slice(0,45000)}\n\nWrite exactly ${n.MCQ} MCQ, ${n.Short} short-answer and ${n.Long} long-answer CONCEPTUAL questions based only on this chapter. Conceptual means they test understanding, reasoning and application, not word-for-word recall. Keep difficulty suitable for the class. ${langLine}\nReturn a JSON array of objects: {"type":"MCQ"|"Short"|"Long","text":"the question (for MCQ put four options (a)-(d) on new lines inside text using \\n)","answer":"correct, complete model answer (for MCQ: the correct option and a one-line reason)"}.`;
+  const user = `CHAPTER TEXT:\n${text.slice(0,45000)}\n\nWrite exactly ${n.MCQ} MCQ, ${n.Short} short-answer and ${n.Long} long-answer CONCEPTUAL questions based only on this chapter. Conceptual means they test understanding, reasoning and application, not word-for-word recall. Keep difficulty suitable for the class. ${langLine}\nReturn a JSON array of objects: {"type":"MCQ"|"Short"|"Long","topic":"short name of the topic / sub-heading of the chapter this question tests","text":"the question (for MCQ put four options (a)-(d) on new lines inside text using \\n)","answer":"correct, complete model answer (for MCQ: the correct option and a one-line reason)"}.`;
   st.innerHTML = '<p class="note-inline">The AI is reading the chapter&hellip; this can take up to a minute.</p>';
   try{
     const out = await pgClaude(system, user, 8000);
@@ -5522,7 +5537,7 @@ async function pgGenerateAI(){
     const arr = JSON.parse(out.slice(a, b+1));
     PG.imp = arr.filter(x=>x && x.text).map(x=>{
       const type = /mcq/i.test(x.type) ? 'MCQ' : (/long/i.test(x.type) ? 'Long' : 'Short');
-      return { id:uid(), text:String(x.text).trim(), type, source:'Conceptual', chapter:chap, marks:PG_DEFAULT_MARKS[type], answer:String(x.answer||'').trim(), keep:true };
+      return { id:uid(), text:String(x.text).trim(), type, source:'Conceptual', chapter:chap, topic:String(x.topic||'').trim(), marks:PG_DEFAULT_MARKS[type], answer:String(x.answer||'').trim(), keep:true };
     });
     PG.impMsg = `<div class="msg-ok">${PG.imp.length} questions made. Read them, fix or untick anything wrong, then save to the bank.</div>`;
     pgRenderBody();
@@ -5822,7 +5837,7 @@ function pgChkPrintList(){
 
 /* ---------------- SMART PAPER: book PDF -> chapters -> choose types -> AI makes the paper ---------------- */
 PG.sm = {
-  chaps:{}, lang:'same', busy:false,
+  chaps:{}, tops:{}, open:{}, lang:'same', busy:false,
   use:{ MCQ:false, Fill:false, TF:false, Match:false, Short:false, Long:false },
   ex:{ MCQ:3, Fill:3, TF:3, Match:1, Short:3, Long:1 },
   co:{ MCQ:2, Fill:2, TF:2, Match:0, Short:2, Long:1 },
@@ -5852,7 +5867,7 @@ function pgSmartPrompt(type, nEx, nCo, bookText, lang, extra){
   const parts = [];
   if(nEx) parts.push(`${nEx} with "source":"Exercise" — taken from the exercise / review-questions section of the book text (keep the book's own wording; if the book's exercise has fewer of this kind than needed, base the rest closely on the topics that exercise covers)`);
   if(nCo) parts.push(`${nCo} with "source":"Conceptual" — NEW questions that test understanding, reasoning and application of the chapter, not copied from the exercise`);
-  return `BOOK TEXT:\n${bookText}\n\nWrite exactly ${nEx+nCo} ${T}.\nOf these: ${parts.join('; and ')}.\nUse only what is in the book text. Never repeat a question. Keep the difficulty right for Class ${PG.cls}. ${langLine}${extra?'\n'+extra:''}\nReturn ONLY a JSON array of objects: {"source":"Exercise"|"Conceptual","chapter":"the exact chapter label from the book text this question comes from","text":"...","answer":"..."}`;
+  return `BOOK TEXT:\n${bookText}\n\nWrite exactly ${nEx+nCo} ${T}.\nOf these: ${parts.join('; and ')}.\nUse only what is in the book text. Never repeat a question. Keep the difficulty right for Class ${PG.cls}. ${langLine}${extra?'\n'+extra:''}\nReturn ONLY a JSON array of objects: {"source":"Exercise"|"Conceptual","chapter":"the exact chapter label from the book text this question comes from","topic":"short name of the topic / sub-heading inside that chapter this question is about","text":"...","answer":"..."}`;
 }
 function pgParseJsonArray(out){
   const a = out.indexOf('[');
@@ -5868,7 +5883,7 @@ function pgSmartHTML(){
   if(!(PG.cfg && PG.cfg.apiKey)) return '<p class="note-inline" style="margin:0 0 12px;">First save a free AI key &mdash; it is needed to make questions from the book.</p>' + pgAiHTML();
   const S = PG.sm;
   const chapRows = PG.src.length
-    ? PG.src.map((c,i)=>`<label style="display:flex;gap:8px;align-items:center;font-weight:400;padding:4px 0;"><input type="checkbox" style="width:auto;" ${S.chaps[c.name]?'checked':''} onchange="PG.sm.chaps[PG.src[${i}].name]=this.checked"> <span dir="auto">${esc(c.name)}</span> <small style="color:var(--muted);">(${pgChLen(c)} chars)</small> <a href="#" onclick="pgSrcDelete(${i});return false;" style="color:#b00020;font-size:12px;margin-left:6px;">delete</a></label>`).join('')
+    ? PG.src.map((c,i)=>`<div><label style="display:flex;gap:8px;align-items:center;font-weight:400;padding:4px 0;"><input type="checkbox" style="width:auto;" ${S.chaps[c.name]?'checked':''} onchange="PG.sm.chaps[PG.src[${i}].name]=this.checked"> <span dir="auto">${esc(c.name)}</span> <small style="color:var(--muted);">(${pgChLen(c)} chars)</small> <a href="#" onclick="pgSrcDelete(${i});return false;" style="color:#b00020;font-size:12px;margin-left:6px;">delete</a> <a href="#" onclick="pgSmOpen(${i});return false;" style="font-size:12px;margin-left:6px;">topics &#9662;</a></label>${pgSmTopicsHTML(c,i)}</div>`).join('')
     : '<div class="empty">No book loaded yet &mdash; upload the PDF in Step 1.</div>';
   const num = (obj,t,w)=>`<input type="number" min="0" max="30" value="${obj[t]}" style="width:${w||62}px;padding:6px;border:1px solid var(--line);border-radius:6px;" oninput="PG.sm.${obj===S.ex?'ex':obj===S.co?'co':'marks'}['${t}']=parseFloat(this.value)||0">`;
   return `
@@ -5924,6 +5939,56 @@ async function pgSrcDelete(i){
   }catch(e){ console.error(e); }
   renderPaperGenerator();
 }
+function pgHeadingTopics(text){
+  const lines = String(text||'').split(/\r?\n/).map(l=>l.trim()).filter(Boolean), out = [];
+  const add = t=>{ t = t.replace(/^[\d\.\)\-\u2013:\s]+/,'').replace(/[:\-\u2013\s]+$/,'').trim(); if(t.length>=3 && t.length<=70 && !out.some(o=>o.toLowerCase()===t.toLowerCase())) out.push(t); };
+  lines.forEach((l,i)=>{
+    if(/^\d+\.\d+(\.\d+)*\.?\s+\S/.test(l) && l.length<=80 && !/[.?!]$/.test(l)){ add(l); return; }
+    const w = l.split(/\s+/);
+    if(w.length<=7 && l.length<=60 && !/[.,;?!]$/.test(l) && !/^(chapter|unit|lesson|exercise|page|figure|fig|table)\b/i.test(l) && /[A-Za-z]/.test(l)){
+      const caps = w.every(x=>/^[A-Z]/.test(x)) || l===l.toUpperCase(), next = lines[i+1] || '';
+      if(caps && next.length > l.length*1.5) add(l);
+    }
+  });
+  return out.slice(0,20);
+}
+async function pgSmTypeTopics(i){
+  const c = PG.src[i]; if(!pgOK() || !c) return;
+  const v = prompt('Type the topics of this chapter, separated by commas:', (c.topics||[]).join(', '));
+  if(v === null) return;
+  c.topics = v.split(/[,\u060C\n]/).map(x=>x.trim()).filter(Boolean).slice(0,30);
+  try{ await fsDb.collection(PG_COLLECTION).doc(pgSrcKey()).set({ chapters: PG.src }); }catch(e){ console.error(e); }
+  pgRenderBody();
+}
+function pgSmOpen(i){ const c = PG.src[i]; if(!c) return; PG.sm.open[c.name] = !PG.sm.open[c.name]; pgRenderBody(); }
+function pgSmTopicsHTML(c, i){
+  const S = PG.sm; if(!S.open[c.name]) return '';
+  const ts = c.topics || [];
+  if(!ts.length) return `<div style="margin:0 0 8px 26px;"><button type="button" class="tag-btn" style="padding:3px 10px;font-size:12px;" onclick="pgSmFindTopics(${i})">Find topics of this chapter</button> <button type="button" class="tag-btn ghost" style="padding:3px 10px;font-size:12px;" onclick="pgSmTypeTopics(${i})">Type topics yourself</button></div>`;
+  return `<div style="margin:0 0 8px 26px;"><small style="color:var(--muted);">Tick topics to make questions from only those topics. Leave all unticked to use the whole chapter.</small>` +
+    ts.map((t,ti)=>`<label style="display:flex;gap:6px;align-items:center;font-weight:400;padding:2px 0;"><input type="checkbox" style="width:auto;" ${S.tops[c.name+PG_TSEP+t]?'checked':''} onchange="PG.sm.tops[PG.src[${i}].name+PG_TSEP+PG.src[${i}].topics[${ti}]]=this.checked"> <span dir="auto">${esc(t)}</span></label>`).join('') +
+    `<div style="margin-top:4px;"><button type="button" class="tag-btn ghost" style="padding:2px 9px;font-size:11px;" onclick="pgSmFindTopics(${i})">Find again</button> <button type="button" class="tag-btn ghost" style="padding:2px 9px;font-size:11px;" onclick="pgSmTypeTopics(${i})">Type / edit topics</button></div></div>`;
+}
+async function pgSmFindTopics(i){
+  const c = PG.src[i]; if(!pgOK() || !c) return;
+  const st = document.getElementById('pgSmStatus'), say = h=>{ const e = document.getElementById('pgSmStatus'); if(e) e.innerHTML = h; };
+  say('<p class="note-inline">Finding the topics of &ldquo;' + esc(c.name) + '&rdquo;&hellip;</p>');
+  try{
+    const text = (await pgSrcText(c)).slice(0,40000);
+    let arr;
+    if(PG.cfg && PG.cfg.apiKey){
+      const out = await pgClaude('You are an experienced school teacher. Reply with ONLY a valid JSON array of strings, no commentary, no markdown fences.', 'CHAPTER TEXT:\n' + text + '\n\nList the main topics / sub-headings of this chapter in the order they appear (between 3 and 15 short names, in the same language as the text, without numbering). Return ONLY a JSON array of strings.', 1500);
+      arr = pgParseJsonArray(out).map(x=>String(x).trim()).filter(Boolean).slice(0,20);
+    } else {
+      arr = pgHeadingTopics(text);   // free: reads the headings of the chapter, no AI key needed
+      if(!arr.length) throw new Error('No headings could be found automatically. Use \u201cType topics yourself\u201d instead.');
+    }
+    if(!arr.length) throw new Error('No topics were found. Please try again.');
+    c.topics = arr;
+    await fsDb.collection(PG_COLLECTION).doc(pgSrcKey()).set({ chapters: PG.src });
+    pgRenderBody(); say('<div class="msg-ok">' + arr.length + ' topics found and saved for this chapter.</div>');
+  }catch(e){ console.error(e); say('<div class="msg-err">' + esc(e.message || 'AI request failed') + '</div>'); }
+}
 async function pgSmartMake(){
   if(!pgOK() || PG.sm.busy) return;
   const st = document.getElementById('pgSmStatus');
@@ -5932,6 +5997,8 @@ async function pgSmartMake(){
   if(!chosen.length){ st.innerHTML = '<div class="msg-err">Step 2: tick at least one chapter.</div>'; return; }
   const types = PG_TYPES.filter(t=>S.use[t] && ((S.ex[t]||0)+(S.co[t]||0))>0);
   if(!types.length){ st.innerHTML = '<div class="msg-err">Step 3: tick at least one question type and give a number above 0.</div>'; return; }
+  const tn = chosen.map(c=>{ const ts = (c.topics||[]).filter(t=>S.tops[c.name+PG_TSEP+t]); return ts.length ? `Chapter "${c.name}": ONLY these topics - ${ts.join('; ')}.` : ''; }).filter(Boolean).join('\n');
+  const topicExtra = tn ? 'TOPIC RESTRICTION (very important - every question must come from these topics only):\n' + tn : '';
   const per = Math.floor(70000/chosen.length);
   st.innerHTML = '<p class="note-inline">Loading the book text&hellip;</p>';
   let texts;
@@ -5943,10 +6010,10 @@ async function pgSmartMake(){
     const t = types[k], nEx = Math.round(S.ex[t]||0), nCo = Math.round(S.co[t]||0);
     st.innerHTML = `<p class="note-inline">Making ${esc(PG_TYPE_LABEL[t])} (${k+1} of ${types.length})&hellip; please wait and do not close the page.</p>`;
     try{
-      const out = await pgClaude(pgSmartSystem(), pgSmartPrompt(t, nEx, nCo, book, S.lang), 8000);
+      const out = await pgClaude(pgSmartSystem(), pgSmartPrompt(t, nEx, nCo, book, S.lang, topicExtra), 8000);
       made[t] = pgParseJsonArray(out).filter(x=>x && x.text).slice(0, nEx+nCo).map(x=>({
         id:uid(), type:t, source:/exer/i.test(x.source||'') ? 'Exercise' : 'Conceptual',
-        chapter:String(x.chapter||chosen[0].name), text:String(x.text).trim(), answer:String(x.answer||'').trim(),
+        chapter:String(x.chapter||chosen[0].name), topic:String(x.topic||'').trim(), text:String(x.text).trim(), answer:String(x.answer||'').trim(),
         marks: S.marks[t] || PG_DEFAULT_MARKS[t], used:0 }));
     }catch(e){ console.error(e); fails.push(PG_TYPE_LABEL[t]+': '+(e.message||'failed')); }
     if(k < types.length-1) await new Promise(r=>setTimeout(r,3000));
@@ -6091,14 +6158,114 @@ async function pgSrcClear(){
 PG.tab = 'auto';
 PG.gt = {
   src:{ 'Exercise':true, 'Past Paper':true, 'Additional':true, 'Conceptual':true },
-  units:{}, untagged:true, avoid:true,
+  units:{}, topics:{}, open:{}, untagged:true, avoid:true, mode:'full', showSet:false,
   order:['MCQ','Short','Long'],
   n:{ MCQ:5, Fill:5, TF:5, Match:1, Short:5, Long:3 },
   marks:{ ...PG_DEFAULT_MARKS }
 };
+function pgGtPicked(){ const G = PG.gt; return Object.keys(G.units).filter(k=>G.units[k]).length + Object.keys(G.topics).filter(k=>G.topics[k]).length; }
+function pgGtMatch(q){
+  const G = PG.gt, ch = q.chapter || '';
+  if(G.mode !== 'smart' || !pgGtPicked()) return true;
+  if(!ch) return !!G.untagged;
+  if(G.units[ch]) return true;
+  return !!G.topics[ch + PG_TSEP + (q.topic||'')];
+}
 function pgGtPool(t){
-  const G = PG.gt, units = Object.keys(G.units).filter(k=>G.units[k]);
-  return PG.bank.filter(q=>q.type===t && pgLangOK(q) && G.src[q.source] && (!units.length || units.includes(q.chapter) || (G.untagged && !q.chapter)));
+  const G = PG.gt;
+  return PG.bank.filter(q=>q.type===t && pgLangOK(q) && G.src[q.source] && pgGtMatch(q));
+}
+function pgGtTopicList(c){ const tl = pgTopicsOf(c).slice(); (PG.src||[]).forEach(x=>{ if(x.name===c) (x.topics||[]).forEach(t=>{ if(t && !tl.includes(t)) tl.push(t); }); }); if(!tl.length) return []; return PG.bank.some(q=>(q.chapter||'')===c && !q.topic) ? tl.concat(['']) : tl; }
+function pgGtOpen(i){ const c = pgChapters()[i]; PG.gt.open[c] = !PG.gt.open[c]; pgRenderBody(); }
+function pgGtChapter(i, on){ const G = PG.gt, c = pgChapters()[i]; G.units[c] = on; pgGtTopicList(c).forEach(t=>{ delete G.topics[c+PG_TSEP+t]; }); pgRenderBody(); }
+function pgGtTopic(i, ti, on){
+  const G = PG.gt, c = pgChapters()[i], tl = pgGtTopicList(c), key = t=>c+PG_TSEP+t;
+  if(G.units[c]){ G.units[c] = false; tl.forEach(t=>{ G.topics[key(t)] = true; }); }
+  G.topics[key(tl[ti])] = on;
+  if(tl.every(t=>G.topics[key(t)])){ G.units[c] = true; tl.forEach(t=>{ delete G.topics[key(t)]; }); }
+  pgRenderBody();
+}
+function pgGtChapterHTML(c, i, box, cnt){
+  const G = PG.gt, tl = pgGtTopicList(c), open = !!G.open[c], chosen = tl.filter(t=>G.topics[c+PG_TSEP+t]).length;
+  let h = `<div style="border-bottom:1px solid #eef0f4;"><div style="display:flex;gap:6px;align-items:center;padding:3px 0;">
+    <input type="checkbox" style="width:auto;" ${G.units[c]?'checked':''} onchange="pgGtChapter(${i},this.checked)" title="Tick = the whole chapter">
+    <a href="#" onclick="pgGtOpen(${i});return false;" style="flex:1;color:inherit;text-decoration:none;" dir="auto"><span style="display:inline-block;width:14px;">${tl.length?(open?'&#9662;':'&#9656;'):''}</span><b>${esc(c)}</b> <small style="color:var(--muted);">(${cnt(q=>q.chapter===c)}${tl.length?' &middot; '+tl.length+' topics':''})</small>${(chosen && !G.units[c])?` <small style="background:#fff7c2;border-radius:8px;padding:0 7px;">${chosen} topic(s) chosen</small>`:''}</a></div>`;
+  if(open){
+    h += tl.length
+      ? `<div style="margin:0 0 6px 26px;">` + tl.map((t,ti)=>`<label style="${box}"><input type="checkbox" style="width:auto;" ${(G.units[c]||G.topics[c+PG_TSEP+t])?'checked':''} onchange="pgGtTopic(${i},${ti},this.checked)"> <span dir="auto">${t?esc(t):'(no topic)'}</span> <small style="color:var(--muted);">(${cnt(q=>q.chapter===c && (q.topic||'')===t)})</small></label>`).join('') + `</div>`
+      : `<div style="margin:0 0 6px 26px;"><small style="color:var(--muted);">No topics in this chapter yet &mdash; give questions a Topic in Add Questions / Question Bank (or use &ldquo;Auto-assign topics&rdquo; there), or find the chapter&rsquo;s topics in Smart Paper.</small></div>`;
+  }
+  return h + '</div>';
+}
+function pgGtSylHTML(){
+  const chips = (PG.syl||[]).map((s,i)=>`<span style="display:inline-flex;align-items:center;gap:4px;background:#eef3ff;border:1px solid #c9d6f5;border-radius:14px;padding:2px 4px 2px 10px;margin:0 6px 6px 0;"><a href="#" onclick="pgSylLoad(${i});return false;" style="text-decoration:none;font-weight:600;" dir="auto">${esc(s.name)}</a><button type="button" onclick="pgSylDel(${i})" title="Delete" style="border:0;background:none;color:#b00020;cursor:pointer;font-size:15px;">&times;</button></span>`).join('');
+  return `<div style="background:#f4f7ff;border:1px solid #d5def5;border-radius:6px;padding:8px 12px;margin-bottom:10px;"><b>Smart syllabus</b> <small style="color:var(--muted);">&mdash; tick chapters/topics below, save them under a name (e.g. &quot;1st Term&quot;), and load it any time.</small>
+    <div style="margin-top:6px;">${chips || '<small style="color:var(--muted);">No saved syllabus yet.</small>'}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;"><input id="pgSylName" placeholder="Syllabus name, e.g. 1st Term" dir="auto" style="flex:1;min-width:180px;padding:6px;border:1px solid var(--line);border-radius:6px;"><button type="button" class="tag-btn" onclick="pgSylSave()">Save ticked chapters/topics</button></div></div>`;
+}
+async function pgSylSave(){
+  if(!pgOK()) return;
+  const n = (document.getElementById('pgSylName').value || '').trim(), G = PG.gt;
+  if(!n){ alert('Type a name for the syllabus first.'); return; }
+  if(!pgGtPicked()){ alert('Tick the chapters / topics first.'); return; }
+  const pick = o=>Object.fromEntries(Object.entries(o).filter(e=>e[1]));
+  PG.syl = (PG.syl||[]).filter(x=>x.name!==n); PG.syl.push({ id:uid(), name:n, units:pick(G.units), topics:pick(G.topics), untagged:G.untagged });
+  if(await pgSaveBank()) pgSet('<div class="msg-ok">Syllabus &ldquo;' + esc(n) + '&rdquo; saved.</div>');
+  renderPaperGenerator();
+}
+function pgSylLoad(i){ const x = (PG.syl||[])[i]; if(!x) return; PG.gt.mode = 'smart'; PG.gt.units = { ...x.units }; PG.gt.topics = { ...x.topics }; PG.gt.untagged = x.untagged !== false; pgRenderBody(); }
+async function pgSylDel(i){ if(!confirm('Delete this syllabus?')) return; PG.syl.splice(i,1); await pgSaveBank(); pgRenderBody(); }
+/* ---------------- school details used in every paper header (edit here) ---------------- */
+const PG_SCHOOL = { name:'Quaid High School', place:'Kala Shah Kaku', phones:['03025448944','03044890467'] };
+function pgNewTestNo(){ return String(Math.floor(100000 + Math.random()*900000)); }
+function pgEnsureTestNo(){ if(PG.paper && !PG.paper.testNo) PG.paper.testNo = pgNewTestNo(); }
+const PG_GT_PRESETS = [['Only MCQs',['MCQ']],['Only Short',['Short']],['Only Long',['Long']],['Short + Long',['Short','Long']],['Long + Short',['Long','Short']],['MCQs + Short',['MCQ','Short']],['MCQs + Long',['MCQ','Long']],['MCQs + Short + Long',['MCQ','Short','Long']],['All types',PG_TYPES.slice()]];
+function pgUnitNo(c, i){ const m = String(c).match(/(?:chapter|unit|lesson|\u0628\u0627\u0628|\u0633\u0628\u0642)\s*[:\-#.]?\s*(\d+)/i) || String(c).match(/^\s*(\d+)/); return m ? m[1] : String(i+1); }
+function pgGtUnitsLine(){
+  const G = PG.gt, chs = pgChapters();
+  if(!chs.length) return 'all';
+  if(G.mode !== 'smart' || !pgGtPicked()) return chs.map(pgUnitNo).join(',');
+  return chs.map((c,i)=>{ if(G.units[c]) return pgUnitNo(c,i); const n = pgGtTopicList(c).filter(t=>G.topics[c+PG_TSEP+t]).length; return n ? pgUnitNo(c,i)+'('+n+' topic'+(n>1?'s':'')+')' : ''; }).filter(Boolean).join(',');
+}
+function pgGtTypeLabel(){
+  const o = PG.gt.order, k = PG_GT_PRESETS.findIndex(x=>JSON.stringify(x[1])===JSON.stringify(o));
+  if(k >= 0) return 'Type ' + (k+1) + ' - ' + PG_GT_PRESETS[k][0];
+  return o.length ? 'Custom - ' + o.map(t=>PG_TYPE_LABEL[t]).join(' + ') : 'Choose a test type';
+}
+function pgNeedPaper(){ alert('Generate a test first.'); }
+function pgGtToolbarHTML(cnt){
+  const G = PG.gt, ic = 'border:0;border-radius:6px;background:#fff;color:#1f2a44;width:38px;height:36px;font-size:17px;cursor:pointer;';
+  const lb = 'background:#fff;color:#222;border-radius:6px;padding:6px 10px;display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap;font-weight:400;';
+  const mx = G.order.map(t=>`${esc(PG_TYPE_LABEL[t])}: <b>${pgGtPool(t).length}</b>`).join(' &nbsp;|&nbsp; ');
+  return `<div style="background:#2a3550;color:#fff;border-radius:8px;padding:10px 12px;margin-bottom:10px;">
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;">
+        <b style="font-size:15px;">Generated&hellip;: ${PG.genCount||0}</b>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button type="button" title="Save this paper" style="${ic}" onclick="${PG.paper?'pgSavePaper()':'pgNeedPaper()'}">&#128196;</button>
+          <button type="button" title="Generate again" style="${ic}" onclick="pgGenerateAuto()">&#8635;</button>
+          <button type="button" title="Settings" style="${ic}" onclick="PG.gt.showSet=!PG.gt.showSet;pgRenderBody()">&#9881;</button>
+          <button type="button" title="Print" style="${ic}" onclick="${PG.paper?'pgPrint()':'pgNeedPaper()'}">&#128424;</button>
+          <button type="button" class="btn-gold" onclick="pgGenerateAuto()">Generate</button>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;">
+        <div style="${lb}"><b>Questions Type:</b>${PG_SOURCES.map(s=>`<label style="display:inline-flex;gap:4px;align-items:center;margin:0 6px 0 2px;font-weight:400;"><input type="checkbox" style="width:auto;" ${G.src[s]?'checked':''} onchange="PG.gt.src['${s}']=this.checked;pgRenderBody()"> ${esc(s)} <small>(${cnt(q=>q.source===s)})</small></label>`).join('')}</div>
+        <div style="${lb}"><b>Syllabus:</b>
+          <label style="display:inline-flex;gap:4px;align-items:center;margin:0 6px 0 2px;font-weight:400;"><input type="radio" name="pgGtMode" style="width:auto;" ${G.mode!=='smart'?'checked':''} onchange="PG.gt.mode='full';pgRenderBody()"> Full</label>
+          <label style="display:inline-flex;gap:4px;align-items:center;font-weight:400;"><input type="radio" name="pgGtMode" style="width:auto;" ${G.mode==='smart'?'checked':''} onchange="PG.gt.mode='smart';pgRenderBody()"> Smart</label></div>
+      </div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:0 0 8px;font-size:14px;">
+      <span style="border:1px solid var(--line);border-radius:6px;padding:5px 12px;background:#fff;">${esc(PG_CLASS_LABEL[PG.cls]||PG.cls)}</span>
+      <span style="border:1px solid var(--line);border-radius:6px;padding:5px 12px;background:#fff;">${esc(PG.subject)}</span>
+      <b dir="auto">Units = ${esc(pgGtUnitsLine())}</b>
+      <span style="margin-left:auto;color:var(--muted);">${esc(pgGtTypeLabel())}</span>
+    </div>
+    <div style="background:#2a3550;color:#fff;border-radius:6px;padding:6px 12px;margin-bottom:12px;font-size:13px;text-align:right;">Maximum number of questions that may come &nbsp;&mdash;&nbsp; ${mx || 'choose a test type'}</div>
+    ${G.showSet ? `<div style="border:1px solid var(--line);border-radius:8px;background:#fff;padding:10px 12px;margin-bottom:12px;"><b>Settings</b>
+      ${pgLangBoxHTML()}
+      <label style="display:flex;gap:6px;align-items:center;font-weight:400;padding:3px 0;"><input type="checkbox" style="width:auto;" ${G.avoid?'checked':''} onchange="PG.gt.avoid=this.checked"> Prefer questions not used in earlier saved papers</label>
+      <label style="display:flex;gap:6px;align-items:center;font-weight:400;padding:3px 0;"><input type="checkbox" style="width:auto;" ${G.spread?'checked':''} onchange="PG.gt.spread=this.checked"> Take questions evenly from every chosen chapter / topic</label></div>` : ''}`;
 }
 function pgAutoHTML(){
   const G = PG.gt; G.order = G.order.filter(t=>pgTypes().includes(t));
@@ -6106,25 +6273,25 @@ function pgAutoHTML(){
     <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;"><button type="button" class="btn-gold" onclick="pgTab('add')">Add Questions</button><button type="button" class="tag-btn" onclick="pgTab('import')">Import PDF</button></div>`;
   const cnt = f=>PG.bank.filter(f).length;
   const chs = pgChapters();
-  const picked = Object.keys(G.units).filter(k=>G.units[k]).length;
+  const picked = pgGtPicked(), mode = PG.gt.mode === 'smart' ? 'smart' : 'full';
   const box = 'display:flex;gap:6px;align-items:center;font-weight:400;padding:3px 0;';
+  const smartHTML = () => `
+    <h4 style="margin:0 0 6px;">Select Chapter(s) / Topic(s)</h4>
+    ${pgGtSylHTML()}
+    <p class="note-inline" style="margin:0 0 6px;">Tick a chapter for the <b>whole chapter</b>. Click the chapter name to open its <b>topics</b> and tick only the topics you want.</p>
+    <div style="max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px 10px;background:#fff;">
+      ${chs.length ? `<label style="${box}"><input type="checkbox" style="width:auto;" ${picked===0?'checked':''} onchange="if(this.checked){PG.gt.units={};PG.gt.topics={};}pgRenderBody()"> <b>All chapters</b></label>` +
+        chs.map((c,i)=>pgGtChapterHTML(c,i,box,cnt)).join('')
+        : '<small>No chapters are tagged in this bank &mdash; all questions will be used.</small>'}
+    </div>
+    ${picked ? `<label style="${box}margin-top:4px;"><input type="checkbox" style="width:auto;" ${G.untagged?'checked':''} onchange="PG.gt.untagged=this.checked;pgRenderBody()"> Also include questions that have no chapter (for example past papers)</label>` : ''}`;
   return `
-    <div style="background:#fff7c2;border:1px solid #e6d96b;border-radius:6px;padding:8px 12px;margin-bottom:12px;">
-      <b>Questions Type:</b>
-      ${PG_SOURCES.map(s=>`<label style="display:inline-flex;gap:4px;align-items:center;margin:0 10px 0 8px;font-weight:400;"><input type="checkbox" style="width:auto;" ${G.src[s]?'checked':''} onchange="PG.gt.src['${s}']=this.checked;pgRenderBody()"> ${esc(s)} <small>(${cnt(q=>q.source===s)})</small></label>`).join('')}
-    </div>
-    ${pgLangBoxHTML()}
-    <h4 style="margin:0 0 6px;">Select Unit(s)</h4>
-    <div style="max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px 10px;background:#fff;">
-      ${chs.length ? `<label style="${box}"><input type="checkbox" style="width:auto;" ${picked===0?'checked':''} onchange="if(this.checked){PG.gt.units={};}pgRenderBody()"> <b>All units</b></label>` +
-        chs.map((c,i)=>`<label style="${box}"><input type="checkbox" style="width:auto;" ${G.units[c]?'checked':''} onchange="PG.gt.units[pgChapters()[${i}]]=this.checked;pgRenderBody()"> <span dir="auto">${esc(c)}</span> <small style="color:var(--muted);">(${cnt(q=>q.chapter===c)})</small></label>`).join('')
-        : '<small>No units are tagged in this bank &mdash; all questions will be used.</small>'}
-    </div>
-    ${picked ? `<label style="${box}margin-top:4px;"><input type="checkbox" style="width:auto;" ${G.untagged?'checked':''} onchange="PG.gt.untagged=this.checked;pgRenderBody()"> Also include questions that have no unit (for example past papers)</label>` : ''}
+    ${pgGtToolbarHTML(cnt)}
+    ${mode==='smart' ? smartHTML() : '<p class="note-inline" style="margin:0 0 6px;">Syllabus <b>Full</b>: questions from every chapter are used. Choose <b>Smart</b> to pick chapters / topics.</p>'}
     <h4 style="margin:16px 0 6px;">Select Test Type</h4>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
-      ${[['Only MCQs',['MCQ']],['Only Short',['Short']],['Only Long',['Long']],['Short + Long',['Short','Long']],['Long + Short',['Long','Short']],['MCQs + Short',['MCQ','Short']],['MCQs + Long',['MCQ','Long']],['MCQs + Short + Long',['MCQ','Short','Long']],['All types',PG_TYPES.slice()]]
-        .filter(x=>pgTypesOK(x[1])).map(x=>`<button type="button" class="tag-btn ${JSON.stringify(G.order)===JSON.stringify(x[1])?'':'ghost'}" onclick='pgGtSetOrder(${JSON.stringify(x[1])})'>${x[0]}</button>`).join('')}
+      ${PG_GT_PRESETS
+        .filter(x=>pgTypesOK(x[1])).map((x,k)=>`<button type="button" class="tag-btn ${JSON.stringify(G.order)===JSON.stringify(x[1])?'':'ghost'}" onclick='pgGtSetOrder(${JSON.stringify(x[1])})'>${PG_GT_PRESETS.indexOf(x)+1}. ${x[0]}</button>`).join('')}
     </div>
     <p class="note-inline" style="margin:0 0 6px;">Or pick your own &mdash; the order you click is the order of the sections in the paper:</p>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
@@ -6137,9 +6304,7 @@ function pgAutoHTML(){
         <td><input type="number" min="0.5" step="0.5" value="${G.marks[t]}" style="width:70px;padding:6px;border:1px solid var(--line);border-radius:6px;" oninput="PG.gt.marks['${t}']=parseFloat(this.value)||1"></td>
         <td${av? '' : ' style="color:#b00020;"'}>${av}</td></tr>`; }).join('')}
     </table></div>` : '<p class="note-inline">Choose at least one test type.</p>'}
-    <label style="${box}margin:10px 0;"><input type="checkbox" style="width:auto;" ${G.avoid?'checked':''} onchange="PG.gt.avoid=this.checked"> Prefer questions not used in earlier saved papers</label>
-    <label style="${box}margin:0 0 10px;"><input type="checkbox" style="width:auto;" ${G.spread?'checked':''} onchange="PG.gt.spread=this.checked"> Take questions evenly from every chosen chapter</label>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
       <button type="button" class="btn-gold" onclick="pgGenerateAuto()">Generate</button>
       ${PG.paper ? '<button type="button" class="tag-btn" onclick="pgGenerateAuto()">&#8635; Generate again</button>' : ''}
     </div>
@@ -6159,9 +6324,10 @@ function pgGenerateAuto(){
     picked.forEach(q=>sec[t].push({ ...q, marks: G.marks[t] || PG_DEFAULT_MARKS[t] }));
   });
   if(!Object.values(sec).some(a=>a.length)){
-    pgSet('<div class="msg-err">No questions matched. Check the Questions Type ticks, the units and the numbers.</div>'); renderPaperGenerator(); return;
+    pgSet('<div class="msg-err">No questions matched. Check the Questions Type ticks, the chapters / topics and the numbers.</div>'); renderPaperGenerator(); return;
   }
   PG.paper = pgNewPaper(sec, G.order.slice(), pgSenior(PG.cls) ? 'both' : G.lang);
+  PG.genCount = (PG.genCount||0) + 1;
   pgSet(`<div class="msg-ok">Test generated &mdash; scroll down to review, replace and print.</div>` + (short.length ? `<div class="msg-err">Not enough questions: ${short.map(esc).join('; ')}.</div>` : ''));
   renderPaperGenerator();
   setTimeout(()=>{ const w = document.getElementById('pgPaperWrap'); if(w) w.scrollIntoView({ behavior:'smooth' }); }, 50);
@@ -6284,7 +6450,7 @@ async function pgClearBank(){
 
 /* ---------------- ADD QUESTIONS: type them yourself once, they stay saved forever ---------------- */
 PG.add = {
-  kind:'MCQ', chapter:'', source:'Exercise', recent:[], note:'',
+  kind:'MCQ', chapter:'', topic:'', source:'Exercise', recent:[], note:'',
   marks:{ MCQ:1, Short:2, Long:5, TF:1, Fill:1, Match:5 },
   mcq:{ q:'', o:['','','',''], ans:'' },
   bulk:{ Short:'', Long:'', TF:'', Fill:'' },
@@ -6353,6 +6519,7 @@ function pgAddHTML(){
         <div class="field"><label>Marks each</label><input type="number" min="0.5" step="0.5" value="${A.marks[k]}" oninput="PG.add.marks['${k}']=parseFloat(this.value)||1"></div>
       </div>
     </div>
+    <div class="field"><label>Topic (optional &mdash; a part of the chapter, so tests can be made topic-wise)</label><input list="pgTopList" dir="auto" value="${esc(A.topic||'')}" placeholder="e.g. Types of Motion" oninput="PG.add.topic=this.value">${pgTopicList()}</div>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 14px;">
       ${PG_ADD_KINDS.filter(x=>!sen||PG_SENIOR_TYPES.includes(x[0])).map(x=>`<button type="button" class="tag-btn ${k===x[0]?'':'ghost'}" onclick="PG.add.kind='${x[0]}';PG.add.note='';pgRenderBody()">${x[1]}</button>`).join('')}
     </div>
@@ -6364,7 +6531,7 @@ function pgRecentRowHTML(r){
   const ip = 'padding:4px 8px;border:1px solid var(--line);border-radius:6px;font-size:12px;';
   return `<div style="padding:8px 10px;border-bottom:1px solid var(--line);">
     <div style="display:flex;gap:8px;align-items:flex-start;"><span dir="auto" style="flex:1;white-space:pre-line;font-size:13px;">${esc(pgShort(r.text,200))}<br><small style="color:var(--muted);">${esc(r.type)}${r.textUr?' &middot; Urdu &#10003;':''}</small></span><button type="button" class="tag-btn" style="padding:2px 8px;font-size:11px;" onclick="PG.add.editRid='${r.id}';pgRenderBody()">Edit</button><button type="button" class="tag-btn danger" style="padding:2px 8px;font-size:11px;" onclick="pgDeleteFromAdd('${r.id}')">Delete</button></div>
-    <div style="display:flex;gap:8px;margin-top:6px;align-items:center;"><input list="pgreList" value="${esc(r.chapter||'')}" placeholder="chapter" style="flex:1;${ip}" onchange="pgQuickSet('${r.id}','chapter',this)"><input type="number" min="0.5" step="0.5" value="${esc(r.marks)}" style="width:70px;${ip}" onchange="pgQuickSet('${r.id}','marks',this)"><small style="color:var(--muted);">marks</small></div></div>`;
+    <div style="display:flex;gap:8px;margin-top:6px;align-items:center;"><input list="pgreList" value="${esc(r.chapter||'')}" placeholder="chapter" style="flex:1;${ip}" onchange="pgQuickSet('${r.id}','chapter',this)"><input list="pgTopList" value="${esc(r.topic||'')}" placeholder="topic" style="flex:1;${ip}" onchange="pgQuickSet('${r.id}','topic',this)"><input type="number" min="0.5" step="0.5" value="${esc(r.marks)}" style="width:70px;${ip}" onchange="pgQuickSet('${r.id}','marks',this)"><small style="color:var(--muted);">marks</small></div></div>`;
 }
 function pgRecentEditHTML(r){
   const sen = pgSenior(PG.cls), U = 'font-family:'+PG_UR_FONT+';';
@@ -6374,6 +6541,7 @@ function pgRecentEditHTML(r){
     <div class="field"><label>Answer / Solution (optional)</label><textarea id="pgreAns" rows="2" dir="auto">${esc(r.answer||'')}</textarea></div>
     <div class="row-2"><div class="field"><label>Type</label><select id="pgreType">${pgOpts(pgTypes(), r.type)}</select></div><div class="field"><label>Source</label><select id="pgreSource">${pgOpts(PG_SOURCES, r.source)}</select></div></div>
     <div class="row-2"><div class="field"><label>Chapter / Unit</label><input id="pgreChapter" list="pgreChList" value="${esc(r.chapter||'')}"><datalist id="pgreChList">${pgChapters().map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div><div class="field"><label>Marks</label><input id="pgreMarks" type="number" min="0.5" step="0.5" value="${esc(r.marks)}"></div></div>
+    <div class="field"><label>Topic</label><input id="pgreTopic" list="pgTopList" dir="auto" value="${esc(r.topic||'')}"></div>
     <button type="button" class="btn-gold" onclick="pgRecentSave('${r.id}')">Save changes</button> <button type="button" class="tag-btn ghost" onclick="PG.add.editRid='';pgRenderBody()">Cancel</button></div>`;
 }
 async function pgRecentSave(id){
@@ -6381,7 +6549,7 @@ async function pgRecentSave(id){
   const g = i => document.getElementById(i), text = g('pgreText').value.trim();
   if(!text){ alert('Write the question first.'); return; }
   const type = g('pgreType').value;
-  const rec = { text, type, source:g('pgreSource').value, chapter:g('pgreChapter').value.trim(), answer:g('pgreAns').value.trim(), marks: parseFloat(g('pgreMarks').value) || PG_DEFAULT_MARKS[type] };
+  const rec = { text, type, source:g('pgreSource').value, chapter:g('pgreChapter').value.trim(), topic:g('pgreTopic').value.trim(), answer:g('pgreAns').value.trim(), marks: parseFloat(g('pgreMarks').value) || PG_DEFAULT_MARKS[type] };
   if(pgSenior(PG.cls)){ const u = g('pgreUr').value.trim(); rec.textUr = u; rec.lang = u ? 'both' : 'en'; } else rec.lang = g('pgreLang').value;
   [PG.bank.find(q=>q.id===id), PG.add.recent.find(q=>q.id===id)].forEach(q=>{ if(q) Object.assign(q, rec); });
   PG.add.editRid = '';
@@ -6395,7 +6563,7 @@ function pgAddListHTML(){
   const A = PG.add, f = A.flt, list = pgAddFiltered(), shown = list.slice(0, A.showN || 50);
   if(!PG.bank.length) return '<div class="empty" style="margin-top:16px;">No questions yet for this subject.</div>';
   return `<h4 style="margin:22px 0 6px;">All questions &mdash; ${esc(PG.cls)} ${esc(PG.subject)} (${PG.bank.length}), newest first</h4>
-    <datalist id="pgreList">${pgChapters().map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
+    <datalist id="pgreList">${pgChapters().map(c=>`<option value="${esc(c)}">`).join('')}</datalist>${pgTopicList()}
     <div class="row-2"><div class="field"><label>Chapter</label><select onchange="PG.add.flt.chapter=this.value;PG.add.showN=50;pgRenderBody()">${pgOpts(pgChapters(), f.chapter, 'All chapters')}</select></div><div class="field"><label>Type</label><select onchange="PG.add.flt.type=this.value;PG.add.showN=50;pgRenderBody()">${pgOpts(pgTypes(), f.type, 'All')}</select></div></div>
     <div class="field"><label>Search (press Enter)</label><input value="${esc(f.q||'')}" onchange="PG.add.flt.q=this.value;PG.add.showN=50;pgRenderBody()"></div>
     ${pgRecentBulkHTML(list.length)}
@@ -6403,22 +6571,48 @@ function pgAddListHTML(){
     <div style="border:1px solid var(--line);border-radius:6px;background:#fff;">${shown.map(r=>A.editRid===r.id ? pgRecentEditHTML(r) : pgRecentRowHTML(r)).join('') || '<div class="empty">No questions match.</div>'}</div>
     ${list.length > shown.length ? `<button type="button" class="tag-btn" style="margin-top:8px;" onclick="PG.add.showN=(PG.add.showN||50)+50;pgRenderBody()">Show 50 more</button>` : ''}`;
 }
+function pgTopicWords(t){ return String(t||'').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w=>w.length>=4 || (/[\u0600-\u06FF]/.test(w) && w.length>=2)); }
+function pgGuessTopic(q){
+  const tl = pgGtTopicList(q.chapter||'').filter(Boolean); if(!tl.length) return '';
+  const hay = ' ' + (q.text||'').toLowerCase() + ' ' + (q.textUr||'') + ' ' + (q.answer||'').toLowerCase() + ' ';
+  let best = '', bs = 0, tie = false;
+  tl.forEach(t=>{
+    const ws = pgTopicWords(t); if(!ws.length) return;
+    let sc = ws.filter(w=>hay.includes(w)).length / ws.length; if(hay.includes(t.toLowerCase())) sc += 1;
+    if(sc > bs){ bs = sc; best = t; tie = false; } else if(sc === bs && sc > 0) tie = true;
+  });
+  return (bs >= 0.5 && !tie) ? best : '';
+}
+async function pgAutoTopics(){
+  if(!pgOK()) return;
+  const list = pgAddFiltered().filter(q=>q.chapter && !q.topic), hits = list.map(q=>[q, pgGuessTopic(q)]).filter(x=>x[1]);
+  if(!list.length){ alert('Every listed question that has a chapter already has a topic.'); return; }
+  if(!hits.length){ alert('No topic could be matched. The chapter needs topics first (give some questions a Topic, or find / type the topics in Smart Paper), and the question should use the topic\u2019s words.'); return; }
+  if(!confirm(hits.length + ' of ' + list.length + ' questions without a topic can be matched to a topic of their chapter. Apply? (You can still change any topic afterwards.)')) return;
+  hits.forEach(h=>{ h[0].topic = h[1]; });
+  await pgSaveBank(); pgRenderBody();
+}
 function pgRecentBulkHTML(n){
   return `<details style="border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:#fff;"><summary style="cursor:pointer;font-weight:600;font-size:13px;">Change chapter / marks of all ${n} listed questions together</summary>
     <div class="row-2" style="margin-top:8px;"><div class="field" style="margin:0;"><label>Chapter / Unit</label><input id="pgreBCh" list="pgreList" placeholder="leave empty to keep"></div><div class="field" style="margin:0;"><label>Marks</label><input id="pgreBMk" type="number" min="0.5" step="0.5" placeholder="leave empty to keep"></div></div>
-    <button type="button" class="tag-btn" style="margin-top:8px;" onclick="pgRecentBulk()">Apply to all ${n}</button></details>`;
+    <div class="field" style="margin:8px 0 0;"><label>Topic</label><input id="pgreBTp" list="pgTopList" placeholder="leave empty to keep"></div>
+    <button type="button" class="tag-btn" style="margin-top:8px;" onclick="pgRecentBulk()">Apply to all ${n}</button>
+    <hr style="border:0;border-top:1px solid var(--line);margin:10px 0;">
+    <button type="button" class="tag-btn" onclick="pgAutoTopics()">Auto-assign topics (free) to the listed questions that have none</button>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px;">Matches each question to a topic of its own chapter by the words used. Nothing is changed until you confirm.</div></details>`;
 }
 async function pgRecentBulk(){
   if(!pgOK()) return;
-  const ch = document.getElementById('pgreBCh').value.trim(), mk = parseFloat(document.getElementById('pgreBMk').value), list = pgAddFiltered();
-  if(!ch && !(mk>0)){ alert('Type a chapter and/or marks first.'); return; }
+  const ch = document.getElementById('pgreBCh').value.trim(), tp = document.getElementById('pgreBTp').value.trim(), mk = parseFloat(document.getElementById('pgreBMk').value), list = pgAddFiltered();
+  if(!ch && !tp && !(mk>0)){ alert('Type a chapter, topic and/or marks first.'); return; }
   if(!confirm('Change ' + list.length + ' questions?')) return;
-  list.forEach(q=>{ if(ch) q.chapter = ch; if(mk>0) q.marks = mk; });
+  list.forEach(q=>{ if(ch) q.chapter = ch; if(tp) q.topic = tp; if(mk>0) q.marks = mk; });
   await pgSaveBank(); pgRenderBody();
 }
 async function pgQuickSet(id, field, el){
   const q = PG.bank.find(x=>x.id===id); if(!q) return;
   if(field==='marks'){ const m = parseFloat(el.value); if(!(m>0)){ el.value = q.marks; return; } q.marks = m; }
+  else if(field==='topic') q.topic = el.value.trim();
   else q.chapter = el.value.trim();
   await pgSaveBank();
   el.style.outline = '2px solid #1a7f37'; setTimeout(()=>{ el.style.outline = ''; }, 900);
@@ -6438,7 +6632,7 @@ async function pgAddStore(items){
     const key = it.type+'|'+it.text.trim().toLowerCase();
     if(!it.text.trim() || have.has(key)) return;
     have.add(key);
-    const q = { id:uid(), used:0, type:it.type, text:it.text.trim(), answer:(it.answer||'').trim(), source:A.source, chapter:A.chapter.trim(), marks:A.marks[it.type] || PG_DEFAULT_MARKS[it.type], lang: it.textUr ? 'both' : (pgSenior(PG.cls) ? 'en' : A.lang) };
+    const q = { id:uid(), used:0, type:it.type, text:it.text.trim(), answer:(it.answer||'').trim(), source:A.source, chapter:A.chapter.trim(), topic:(A.topic||'').trim(), marks:A.marks[it.type] || PG_DEFAULT_MARKS[it.type], lang: it.textUr ? 'both' : (pgSenior(PG.cls) ? 'en' : A.lang) };
     if(it.textUr && it.textUr.trim()) q.textUr = it.textUr.trim();
     PG.bank.push(q); A.recent.unshift(q); n++;
   });
@@ -6494,7 +6688,8 @@ async function pgAddUndo(id){
 }
 function pgPickSpread(pool, n, avoid){
   const groups = {};
-  pool.forEach(q=>{ const c = q.chapter || ''; (groups[c] = groups[c] || []).push(q); });
+  const G = PG.gt || {}, tk = Object.keys(G.topics||{}).filter(k=>G.topics[k]);
+  pool.forEach(q=>{ const c = q.chapter || '', k = tk.some(x=>x.startsWith(c+PG_TSEP)) ? c+PG_TSEP+(q.topic||'') : c; (groups[k] = groups[k] || []).push(q); });
   const lists = Object.values(groups).map(g=>avoid ? pgPickLeastUsed(g, g.length) : pgShuffle(g));
   const order = pgShuffle(lists.map((_,i)=>i)), out = [];
   while(out.length < n && lists.some(l=>l.length)){
