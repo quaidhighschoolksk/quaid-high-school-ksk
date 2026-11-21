@@ -6519,7 +6519,6 @@ function pgAddHTML(){
       <textarea rows="${sen?6:8}" dir="auto" style="${inp}" placeholder="One per line&hellip;" oninput="PG.add.bulk['${k}']=this.value">${esc(A.bulk[k])}</textarea>
       <div style="margin-top:10px;"><button type="button" class="btn-gold" onclick="pgAddBulk('${k}')">Add all lines</button></div>`;
   }
-  if(k==='MCQ') body = pgMcqBulkHTML(inp, sen) + `<details style="margin-top:14px;"><summary style="cursor:pointer;font-weight:600;">Add one MCQ at a time (old form)</summary><div style="margin-top:10px;">${body}</div></details>`;
   return `
     <p class="note-inline" style="margin:0 0 10px;">Type the questions here once &mdash; they are saved for good under the chapter you choose. Generate Test and Manual Paper then use them. Bank now has <b>${PG.bank.length}</b> questions for ${esc(PG.subject)}.</p>
     ${A.note ? `<div>${A.note}</div>` : ''}
@@ -6656,128 +6655,6 @@ async function pgAddStore(items){
   A.note = ok ? `<div class="msg-ok">${n} question(s) saved.</div>` : (PG.msg || '');
   return ok ? n : 0;
 }
-/* ---------------- BULK MCQ ENTRY: paste many MCQs at once, preview, save ---------------- */
-PG.add.mb = { en:'', ur:'' };
-const PG_MB_LET = { 'a':0,'b':1,'c':2,'d':3,'الف':0,'ا':0,'ب':1,'ج':2,'د':3 };
-function pgMbLet(s){
-  s = String(s||'').replace(/[()\s\.]/g,'');
-  const k = /^[a-d]$/i.test(s) ? s.toLowerCase() : s;
-  return (k in PG_MB_LET) ? PG_MB_LET[k] : (/^[1-4]$/.test(s) ? (+s - 1) : -1);
-}
-function pgParseMcqs(raw){
-  const out = [], fresh = () => ({ q:'', o:['','','',''], ans:'', n:0 });
-  let cur = null;
-  const flush = () => { if(cur && (cur.q.trim() || cur.n>0)) out.push(cur); cur = null; };
-  const optRe = /^\s*\(?(الف|[a-dA-Dابجد])\s*[\)\.\:]\s*(.*)$/;
-  const ansRe = /^\s*(?:ans(?:wer)?|correct(?:\s*(?:answer|option))?|key|جواب|درست\s*جواب)\s*[:\-=]?\s*\(?\s*(الف|[a-dA-D1-4ابجد])\s*\)?\s*(?:[\)\.].*)?$/i;
-  const numRe = /^\s*(?:Q(?:uestion)?\s*\.?\s*)?\d+\s*[\.\)\:\-]\s+/i;
-  const mark = /\s*(?:✓|✔|\(correct\)|\*)\s*$/i;
-  const setOpt = (i, txt) => { let t = String(txt||'').trim(); if(mark.test(t)){ t = t.replace(mark,'').trim(); cur.ans = String(i); } cur.o[i] = t; cur.n++; };
-  String(raw||'').replace(/\r/g,'').split('\n').forEach(line0=>{
-    const line = line0.trim();
-    if(!line){ if(cur && cur.ans!=='') flush(); return; }
-    /* one MCQ per row:  Question | A | B | C | D | answer   (also tab-separated, e.g. pasted from Excel) */
-    if(/\t/.test(line) || / \| /.test(line)){
-      const p = line.split(/\t| \| /).map(x=>x.trim());
-      if(p.length>=6 && /^\d+[\.\)]?$/.test(p[0])) p.shift();   // Excel row-number column
-      if(p.length >= 5){
-        flush(); cur = fresh(); cur.q = p[0].replace(numRe,'');
-        for(let i=0;i<4;i++){ cur.o[i] = p[i+1] || ''; if(cur.o[i]) cur.n++; }
-        if(p[5]){ let ix = pgMbLet(p[5]); if(ix<0) ix = cur.o.findIndex(o=>o && o.toLowerCase()===p[5].toLowerCase()); if(ix>=0) cur.ans = String(ix); }
-        flush(); return;
-      }
-    }
-    const am = line.match(ansRe);
-    if(am && cur){ const ix = pgMbLet(am[1]); if(ix>=0) cur.ans = String(ix); return; }
-    /* all options on one line:  a) x  b) y  c) z  d) w */
-    if(/(^|\s)\(?a[\)\.]\s.+\s\(?b[\)\.]\s/i.test(line)){
-      const parts = line.split(/\s*\(?([a-dA-D])[\)\.]\s+/);
-      if(cur && cur.n>0) flush();
-      if(!cur) cur = fresh();
-      const pre = parts[0].trim();
-      if(pre) cur.q = (cur.q ? cur.q + ' ' : '') + pre.replace(numRe,'');
-      for(let k=1;k<parts.length;k+=2){ const i = 'abcd'.indexOf(parts[k].toLowerCase()); if(i>=0) setOpt(i, parts[k+1]); }
-      return;
-    }
-    const om = line.match(optRe);
-    if(om && cur && (cur.q.trim() || cur.n>0)){
-      const i = pgMbLet(om[1]);
-      if(i>=0){ setOpt(i, om[2]); return; }
-    }
-    /* otherwise it is question text */
-    if(cur && cur.n>0) flush();
-    else if(cur && cur.q.trim() && numRe.test(line)) flush();
-    if(!cur) cur = fresh();
-    cur.q = (cur.q ? cur.q + ' ' : '') + line.replace(numRe,'');
-  });
-  flush();
-  return out;
-}
-function pgMcqFmt(m){
-  const opts = m.o.map((o,i)=>o.trim() ? `(${'abcd'[i]}) ${o.trim()}` : null);
-  return { text: m.q.trim() + '\n' + opts.filter(Boolean).join('\n'), answer: (m.ans!=='' && opts[+m.ans]) ? opts[+m.ans] : '' };
-}
-function pgMbPreviewHTML(){
-  const mb = PG.add.mb, sen = pgSenior(PG.cls) || PG.add.lang==='both';
-  const en = pgParseMcqs(mb.en), ur = sen ? pgParseMcqs(mb.ur) : [];
-  if(!en.length) return '<div style="color:var(--muted);font-size:13px;">Nothing pasted yet.</div>';
-  const noAns = en.filter(m=>m.ans==='').length, bad = en.filter(m=>!m.q.trim() || m.n<2).length;
-  const head = `<div style="font-size:13px;margin-bottom:6px;"><b>${en.length}</b> MCQs found`
-    + (noAns ? ` &middot; <span style="color:#b36b00;">${noAns} without a correct answer (still saved)</span>` : ' &middot; all have answers')
-    + (bad ? ` &middot; <span style="color:#b00020;">${bad} incomplete (will be skipped)</span>` : '')
-    + (sen && mb.ur.trim() ? ` &middot; Urdu: ${ur.length}` + (ur.length!==en.length ? ' <span style="color:#b00020;">(does not match the English count &mdash; they are paired in order)</span>' : '') : '')
-    + '</div>';
-  const rows = en.map((m,i)=>{
-    const isBad = !m.q.trim() || m.n<2;
-    return `<div style="padding:6px 10px;border-bottom:1px solid var(--line);font-size:13px;${isBad?'background:#fff3f3;':''}"><b>${i+1}.</b> <span dir="auto">${esc(m.q) || '<i>(no question)</i>'}</span>
-      <div style="display:flex;flex-wrap:wrap;gap:2px 14px;margin:2px 0 0 18px;">${m.o.map((o,k)=>o.trim() ? `<span dir="auto" style="${m.ans===String(k)?'color:#1a7f37;font-weight:700;':''}">(${'abcd'[k]}) ${esc(o)}${m.ans===String(k)?' &#10003;':''}</span>` : '').join('')}</div></div>`;
-  }).join('');
-  return head + `<div style="max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:6px;background:#fff;">${rows}</div>`;
-}
-function pgMbLive(){ const el = document.getElementById('pgMbPrev'); if(el) el.innerHTML = pgMbPreviewHTML(); }
-function pgMcqBulkHTML(inp, sen){
-  const mb = PG.add.mb, U = 'font-family:'+PG_UR_FONT+';';
-  return `<div style="border:2px solid var(--gold,#e8a900);border-radius:8px;padding:12px;background:#fffdf5;">
-    <h4 style="margin:0 0 4px;">&#9889; Fast add &mdash; paste many MCQs at once</h4>
-    <p class="note-inline" style="margin:0 0 8px;">Paste from Word, a PDF, Excel or any AI. Each MCQ = question, options (a) (b) (c) (d), and an answer line:<br>
-    <code>1. Capital of Pakistan?<br>a) Lahore<br>b) Islamabad<br>c) Karachi<br>d) Quetta<br>Ans: b</code><br>
-    Also works: all options on one line, a * or &#10003; after the right option, or one MCQ per row <code>Question | A | B | C | D | b</code> (copy straight from Excel / Google Sheets). The Chapter, Source, Marks and Topic above are applied to all of them.</p>
-    <div class="field"><label>${sen?'English MCQs':'MCQs'}</label><textarea rows="10" dir="auto" style="${inp}" placeholder="Paste your MCQs here&hellip;" oninput="PG.add.mb.en=this.value;pgMbLive()">${esc(mb.en)}</textarea></div>
-    ${sen ? `<div class="field"><label>Urdu MCQs (اردو) &mdash; optional, same order as the English ones</label><textarea rows="8" dir="rtl" style="${inp}${U}" placeholder="Urdu version, same order&hellip;" oninput="PG.add.mb.ur=this.value;pgMbLive()">${esc(mb.ur)}</textarea></div>` : ''}
-    <div id="pgMbPrev" style="margin:8px 0;">${pgMbPreviewHTML()}</div>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;">
-      <button type="button" class="btn-gold" onclick="pgMbSave()">Save all these MCQs</button>
-      <button type="button" class="tag-btn" onclick="pgMbPrompt()">Copy AI prompt (free format helper)</button>
-      <button type="button" class="tag-btn ghost" onclick="PG.add.mb={en:'',ur:''};pgRenderBody()">Clear</button>
-    </div></div>`;
-}
-function pgMbPrompt(){
-  const t = 'Convert the MCQs below (or from the attached page/photo) into EXACTLY this format and nothing else: no intro, no bold, no markdown. One blank line between questions.\n\n1. Question text?\na) option\nb) option\nc) option\nd) option\nAns: b\n\nThe Ans line must be the letter of the correct option.';
-  const done = () => { PG.add.note = '<div class="msg-ok">Prompt copied. Paste it into any free AI (ChatGPT, Claude, Gemini) with your book page or photo, then paste its reply in the box.</div>'; pgRenderBody(); };
-  if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, ()=>prompt('Copy this text:', t));
-  else prompt('Copy this text:', t);
-}
-async function pgMbSave(){
-  if(!pgOK()) return;
-  const mb = PG.add.mb, sen = pgSenior(PG.cls) || PG.add.lang==='both';
-  const en = pgParseMcqs(mb.en), ur = sen ? pgParseMcqs(mb.ur) : [];
-  const items = []; let skipped = 0;
-  en.forEach((m,i)=>{
-    if(!m.q.trim() || m.n<2){ skipped++; return; }
-    const f = pgMcqFmt(m), u = ur[i];
-    let answer = f.answer;
-    if(!answer && u && u.ans!==''){ const o = m.o[+u.ans]; if(o && o.trim()) answer = `(${'abcd'[+u.ans]}) ${o.trim()}`; }
-    const it = { type:'MCQ', text:f.text, answer };
-    if(u && u.q.trim() && u.n>=2) it.textUr = pgMcqFmt(u).text;
-    items.push(it);
-  });
-  if(!items.length){ PG.add.note = '<div class="msg-err">No complete MCQ found. Each one needs a question and at least two options.</div>'; pgRenderBody(); return; }
-  const n = await pgAddStore(items);
-  if(n){ mb.en = ''; mb.ur = ''; }
-  if(skipped && n) PG.add.note += `<div class="msg-err">${skipped} incomplete one(s) were skipped.</div>`;
-  pgRenderBody();
-}
-
 async function pgAddMcq(){
   const m = PG.add.mcq;
   const opts = m.o.map((o,i)=>o.trim() ? `(${'abcd'[i]}) ${o.trim()}` : null);
