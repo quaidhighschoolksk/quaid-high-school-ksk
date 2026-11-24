@@ -4679,7 +4679,7 @@ function renderPaperGenerator(){
     return;
   }
   const subs = PG.cls ? (DB.classSubjects[PG.cls] || []) : [];
-  const tabs = [['auto','Generate Test'],['add','Add Questions'],['manual','Manual Paper'],['bank','Question Bank'],['import','Import PDF'],['check','Check Sheets (AI)'],['saved','Saved']];
+  const tabs = [['auto','Generate Test'],['add','Add Questions'],['manual','Manual Paper'],['bank','Question Bank'],['import','Import PDF'],['check','Check Sheets (AI)'],['syllabus','Syllabus'],['saved','Saved']];
   box.innerHTML = `
     <h3>Paper Generator <span style="font-size:11px;background:var(--navy-900);color:#fff;padding:2px 8px;border-radius:10px;vertical-align:middle;">ADMIN ONLY</span></h3>
     <p class="note-inline" style="margin:-6px 0 14px;">Build a question bank (exercise + conceptual past-paper questions), then make a paper manually or automatically. Only this admin account can see or use any of this.</p>
@@ -4715,10 +4715,152 @@ async function pgTab(t){
 function pgNeedScope(){
   return '<div class="empty">Select a Class and Subject above first.</div>';
 }
+/* ---------------- SYLLABUS: term-wise, book-wise, one printed page ---------------- */
+const PG_TERMS = [['t1','1st Term','\u067e\u06c1\u0644\u0627 \u0679\u0631\u0645'],['t2','2nd Term','\u062f\u0648\u0633\u0631\u0627 \u0679\u0631\u0645'],['ta','Annual','\u0633\u0627\u0644\u0627\u0646\u06c1']];
+PG.syb = { term:'t1', medium:'en', doc:null, key:'', msg:'', timer:null };
+function pgSylKey(){ const m = pgSenior(PG.cls) ? PG.syb.medium : 'all'; return 'syllabus__' + (PG.cls+'__'+m).replace(/[\/\s]+/g,'_'); }
+function pgSylNew(){
+  const y = new Date().getFullYear(), subs = (DB.classSubjects[PG.cls] || []);
+  return { cls:PG.cls, medium: pgSenior(PG.cls) ? PG.syb.medium : 'all', session: y + '-' + String((y+1)%100).padStart(2,'0'), books: subs.map(x=>({ id:uid(), name:x, sub:x })), terms:{ t1:{}, t2:{}, ta:{} } };
+}
+async function pgSylLoad(force){
+  if(!pgOK() || !PG.cls) return;
+  const key = pgSylKey();
+  if(!force && PG.syb.doc && PG.syb.key===key) return;
+  PG.syb.key = key; PG.syb.doc = null;
+  try{
+    const d = await fsDb.collection(PG_COLLECTION).doc(key).get();
+    PG.syb.doc = d.exists ? Object.assign(pgSylNew(), d.data()) : pgSylNew();
+  }catch(e){ console.error(e); PG.syb.doc = pgSylNew(); PG.syb.msg = '<div class="msg-err">Could not load the saved syllabus (check Firestore rules for paper_bank).</div>'; }
+  PG.syb.doc.terms = Object.assign({ t1:{}, t2:{}, ta:{} }, PG.syb.doc.terms || {});
+  pgRenderBody();
+}
+function pgSylSaveSoon(){ clearTimeout(PG.syb.timer); PG.syb.timer = setTimeout(pgSylSave, 500); }
+async function pgSylSave(){
+  if(!pgOK() || !PG.syb.doc) return false;
+  try{ await fsDb.collection(PG_COLLECTION).doc(PG.syb.key).set(PG.syb.doc); const el = document.getElementById('pgSylStat'); if(el) el.textContent = 'Saved \u2713'; return true; }
+  catch(e){ console.error(e); alert('Save failed: ' + (e.message || 'permission denied')); return false; }
+}
+function pgSylSetTerm(t){ PG.syb.term = t; PG.syb.msg = ''; pgRenderBody(); }
+function pgSylSetMedium(m){ PG.syb.medium = m; PG.syb.doc = null; PG.syb.msg = ''; pgRenderBody(); }
+function pgSylText(id, v){ const d = PG.syb.doc; d.terms[PG.syb.term] = d.terms[PG.syb.term] || {}; d.terms[PG.syb.term][id] = v; pgSylSaveSoon(); }
+function pgSylName(id, v){ const b = PG.syb.doc.books.find(x=>x.id===id); if(b){ b.name = v.trim(); pgSylSaveSoon(); } }
+function pgSylSession(v){ PG.syb.doc.session = v.trim(); pgSylSaveSoon(); }
+function pgSylDel(id){
+  const b = PG.syb.doc.books.find(x=>x.id===id); if(!b || !confirm('Remove the book "' + b.name + '" from this syllabus (all terms)?')) return;
+  PG.syb.doc.books = PG.syb.doc.books.filter(x=>x.id!==id); pgSylSaveSoon(); pgRenderBody();
+}
+function pgSylAdd(){
+  const el = document.getElementById('pgSylNewBook'), v = el ? el.value.trim() : '';
+  if(!v){ alert('Type the book name first.'); return; }
+  PG.syb.doc.books.push({ id:uid(), name:v, sub:'' }); pgSylSaveSoon(); pgRenderBody();
+}
+async function pgSylFillChapters(){
+  const d = PG.syb.doc, t = PG.syb.term; let n = 0;
+  PG.syb.msg = '<div class="msg-ok">Looking in your saved books and question banks&hellip;</div>'; pgRenderBody();
+  for(const b of d.books){
+    if(!b.sub || (d.terms[t] || {})[b.id]) continue;
+    try{
+      let names = [];
+      const sd = await fsDb.collection(PG_COLLECTION).doc(pgSrcKeyFor(PG.cls, b.sub)).get();
+      if(sd.exists) names = (sd.data().chapters || []).map(c=>c.name).filter(Boolean);
+      if(!names.length){
+        const bd = await fsDb.collection(PG_COLLECTION).doc('bank__' + (PG.cls+'__'+b.sub).replace(/[\/\s]+/g,'_')).get();
+        if(bd.exists) names = [...new Set((bd.data().items || []).map(q=>q.chapter).filter(Boolean))];
+      }
+      if(names.length){ d.terms[t] = d.terms[t] || {}; d.terms[t][b.id] = names.join(', '); n++; }
+    }catch(e){ console.error(e); }
+  }
+  PG.syb.msg = n ? `<div class="msg-ok">Chapter names filled for ${n} book(s). Delete the chapters that do not belong to this term.</div>` : '<div class="msg-err">No saved chapters were found for the empty books. Add questions with a chapter, or save the book in Smart Paper first.</div>';
+  await pgSylSave(); pgRenderBody();
+}
+async function pgSylAnnual(){
+  const d = PG.syb.doc;
+  if(Object.values(d.terms.ta || {}).some(v=>(v||'').trim()) && !confirm('Annual already has text for some books. Replace it with 1st Term + 2nd Term?')) return;
+  d.terms.ta = {};
+  d.books.forEach(b=>{ const j = [(d.terms.t1||{})[b.id], (d.terms.t2||{})[b.id]].map(x=>(x||'').trim()).filter(Boolean).join(', '); if(j) d.terms.ta[b.id] = j; });
+  PG.syb.term = 'ta'; PG.syb.msg = '<div class="msg-ok">Annual syllabus = 1st Term + 2nd Term for every book. You can still edit it.</div>';
+  await pgSylSave(); pgRenderBody();
+}
+async function pgSylCopyOther(){
+  if(!pgOK()) return;
+  const other = PG.syb.medium === 'en' ? 'ur' : 'en', key = 'syllabus__' + (PG.cls+'__'+other).replace(/[\/\s]+/g,'_');
+  try{
+    const od = await fsDb.collection(PG_COLLECTION).doc(key).get();
+    if(!od.exists){ alert('The ' + (other==='en'?'English':'Urdu') + ' medium syllabus has not been saved yet.'); return; }
+    if(!confirm('Replace this ' + (PG.syb.medium==='en'?'English':'Urdu') + ' medium syllabus (all books and terms) with a copy of the ' + (other==='en'?'English':'Urdu') + ' medium one?')) return;
+    const o = od.data(), d = PG.syb.doc;
+    d.books = JSON.parse(JSON.stringify(o.books || [])); d.terms = Object.assign({ t1:{}, t2:{}, ta:{} }, JSON.parse(JSON.stringify(o.terms || {})));
+    PG.syb.msg = '<div class="msg-ok">Copied. Now translate / adjust the texts for this medium.</div>';
+    await pgSylSave(); pgRenderBody();
+  }catch(e){ console.error(e); alert('Could not copy: ' + (e.message || '')); }
+}
+function pgSylHTML(){
+  const S = PG.syb;
+  if(!PG.cls) return '<div class="empty">Select a Class above first.</div>';
+  const d = S.doc;
+  if(!d || S.key !== pgSylKey()) return '<div class="empty">Loading&hellip;</div>';
+  const sen = pgSenior(PG.cls), ur = sen && S.medium === 'ur', T = S.term, U = 'font-family:' + PG_UR_FONT + ';';
+  const inp = 'width:100%;padding:7px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:14px;';
+  const filled = d.books.filter(b=>((d.terms[T] || {})[b.id] || '').trim()).length;
+  return `
+    ${S.msg}
+    <p class="note-inline" style="margin:0 0 10px;">Write the syllabus <b>book by book</b> for each term. Everything is saved automatically. Print puts <b>all books on one page</b> (books left empty are skipped).</p>
+    ${sen ? `<div style="margin:0 0 10px;"><b>Medium:</b> ${[['en','English Medium'],['ur','Urdu Medium (\u0627\u0631\u062f\u0648)']].map(x=>`<button type="button" class="tag-btn ${S.medium===x[0]?'':'ghost'}" style="margin:0 6px;" onclick="pgSylSetMedium('${x[0]}')">${x[1]}</button>`).join('')} <button type="button" class="tag-btn ghost" style="padding:3px 10px;font-size:12px;" onclick="pgSylCopyOther()">Copy from ${ur?'English':'Urdu'} medium</button></div>` : ''}
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 10px;">
+      ${PG_TERMS.map(x=>`<button type="button" class="tag-btn ${T===x[0]?'':'ghost'}" onclick="pgSylSetTerm('${x[0]}')">${x[1]}</button>`).join('')}
+      <span style="margin-left:auto;display:flex;gap:6px;align-items:center;"><label style="font-weight:600;">Session</label><input value="${esc(d.session||'')}" style="width:100px;padding:6px;border:1px solid var(--line);border-radius:6px;" onchange="pgSylSession(this.value)"></span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px;">
+      <button type="button" class="tag-btn" onclick="pgSylFillChapters()">Fill chapter names from my books</button>
+      ${T==='ta' ? '' : ''}<button type="button" class="tag-btn" onclick="pgSylAnnual()">Annual = 1st + 2nd Term</button>
+    </div>
+    ${d.books.map(b=>`<div style="border:1px solid var(--line);border-radius:8px;background:#fff;padding:8px 10px;margin-bottom:8px;display:grid;grid-template-columns:minmax(120px,22%) 1fr auto;gap:10px;align-items:start;">
+      <input dir="auto" value="${esc(b.name)}" style="${inp}font-weight:700;${ur?U:''}" onchange="pgSylName('${b.id}',this.value)">
+      <textarea rows="3" dir="auto" placeholder="${ur?'\u0627\u0633 \u06a9\u062a\u0627\u0628 \u06a9\u0627 \u0646\u0635\u0627\u0628 \u0644\u06a9\u06be\u06cc\u06ba':'Syllabus of this book (chapters / units)'}" style="${inp}${ur?U:''}" onchange="pgSylText('${b.id}',this.value)">${esc((d.terms[T]||{})[b.id]||'')}</textarea>
+      <button type="button" class="tag-btn ghost" title="Remove this book" style="padding:3px 9px;" onclick="pgSylDel('${b.id}')">&times;</button>
+    </div>`).join('')}
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0;"><input id="pgSylNewBook" dir="auto" placeholder="Add another book (e.g. Islamiyat Lazmi)" style="${inp}max-width:320px;"><button type="button" class="tag-btn" onclick="pgSylAdd()">+ Add book</button></div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+      <button type="button" class="btn-gold" onclick="pgSylPrint('${T}')">Print ${PG_TERMS.find(x=>x[0]===T)[1]} syllabus (${filled} book${filled===1?'':'s'})</button>
+      <button type="button" class="tag-btn" onclick="pgSylPrint('all')">Print all three terms</button>
+      <span id="pgSylStat" style="font-size:12px;color:var(--muted);"></span>
+    </div>`;
+}
+function pgSylPageHTML(tk){
+  const d = PG.syb.doc, sen = pgSenior(PG.cls), ur = sen && PG.syb.medium === 'ur', T = PG_TERMS.find(x=>x[0]===tk);
+  const rows = d.books.map(b=>({ name:b.name, text:((d.terms[tk] || {})[b.id] || '').trim() })).filter(r=>r.text);
+  if(!rows.length) return '';
+  const L = rows.reduce((a,r)=>a + r.text.length + r.name.length + 30, 0);
+  const fs = L<900 ? 14 : L<1500 ? 12.5 : L<2200 ? 11.5 : L<3200 ? 10.5 : L<4500 ? 9.5 : 8.5;
+  const lab = ur ? { sr:'\u0646\u0645\u0628\u0631', bk:'\u06a9\u062a\u0627\u0628', sy:'\u0646\u0635\u0627\u0628', title:'\u0646\u0635\u0627\u0628' } : { sr:'Sr.', bk:'Book', sy:'Syllabus', title:'SYLLABUS' };
+  const cls = PG_CLASS_LABEL[PG.cls] || PG.cls, med = sen ? (ur ? '\u0627\u0631\u062f\u0648 \u0645\u06cc\u0688\u06cc\u0645' : 'English Medium') : '';
+  const td = 'border:1px solid #000;padding:' + (fs>=12?6:4) + 'px 8px;vertical-align:top;';
+  return `<div class="pg-stu-sheet" style="display:flow-root;font-family:'Times New Roman',serif;color:#000;">
+    <div dir="ltr" style="display:flex;align-items:center;gap:14px;">
+      <img src="${SCHOOL_LOGO}" alt="" style="width:66px;height:auto;flex:none;">
+      <div style="flex:1;text-align:center;"><div style="font-family:'Playfair Display',serif;font-weight:800;font-size:27px;letter-spacing:.02em;text-transform:uppercase;line-height:1.15;">${esc(PG_SCHOOL.name)}</div>
+        <div style="font-weight:700;font-size:15px;margin-top:2px;">${esc(PG_SCHOOL.place)}, ${PG_SCHOOL.phones.map(esc).join(' ')}</div></div>
+    </div>
+    <div ${ur?'dir="rtl"':''} style="text-align:center;margin:10px 0 8px;font-weight:800;font-size:19px;${ur?'font-family:'+PG_UR_FONT+';line-height:1.9;':''}border-top:2px solid #000;border-bottom:2px solid #000;padding:4px 0;">${lab.title} &mdash; ${ur?T[2]:T[1]} &nbsp;|&nbsp; ${esc(cls)}${med?' &nbsp;|&nbsp; '+med:''}${d.session?' &nbsp;|&nbsp; '+esc(d.session):''}</div>
+    <table ${ur?'dir="rtl"':''} style="width:100%;border-collapse:collapse;font-size:${fs}px;line-height:${ur?1.9:1.35};${ur?'font-family:'+PG_UR_FONT+';':''}">
+      <tr style="background:#e9eef7;font-weight:700;"><td style="${td}width:7%;text-align:center;">${lab.sr}</td><td style="${td}width:24%;">${lab.bk}</td><td style="${td}">${lab.sy}</td></tr>
+      ${rows.map((r,i)=>`<tr style="page-break-inside:avoid;"><td style="${td}text-align:center;">${i+1}</td><td style="${td}font-weight:700;" dir="auto">${esc(r.name)}</td><td style="${td}white-space:pre-line;" dir="auto">${esc(r.text)}</td></tr>`).join('')}
+    </table>
+  </div>`;
+}
+function pgSylPrint(which){
+  if(!PG.syb.doc) return;
+  const keys = which === 'all' ? PG_TERMS.map(x=>x[0]) : [which];
+  const pages = keys.map(k=>pgSylPageHTML(k)).filter(Boolean);
+  if(!pages.length){ alert('Write the syllabus of at least one book first.'); return; }
+  printHTML(pages.map((p,i)=>i<pages.length-1 ? p.replace('<div class="pg-stu-sheet" style="', '<div class="pg-stu-sheet" style="break-after:page;page-break-after:always;') : p).join(''));
+}
 function pgRenderBody(){
   const b = document.getElementById('pgBody');
   if(!b) return;
   if(PG.tab==='saved'){ b.innerHTML = pgSavedHTML(); return; }
+  if(PG.tab==='syllabus'){ b.innerHTML = pgSylHTML(); if(PG.cls && (!PG.syb.doc || PG.syb.key!==pgSylKey())) pgSylLoad(); return; }
   if(PG.tab==='smart' && PG.cls && !PG.subject){ b.innerHTML = pgLibraryHTML(); pgLoadLibrary(); return; }
   if(!PG.cls || !PG.subject){ b.innerHTML = pgNeedScope(); return; }
   if(PG.tab==='bank') b.innerHTML = pgBankHTML();
