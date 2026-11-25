@@ -4717,7 +4717,7 @@ function pgNeedScope(){
 }
 /* ---------------- SYLLABUS: term-wise, book-wise, one printed page ---------------- */
 const PG_TERMS = [['t1','1st Term','\u067e\u06c1\u0644\u0627 \u0679\u0631\u0645'],['t2','2nd Term','\u062f\u0648\u0633\u0631\u0627 \u0679\u0631\u0645'],['ta','Annual','\u0633\u0627\u0644\u0627\u0646\u06c1']];
-PG.syb = { term:'t1', medium:'en', doc:null, key:'', msg:'', timer:null, dirty:false, loaded:false, edits:{}, cat:{}, open:{}, pick:{}, exp:{}, store:{ sessions:{} }, mode:null, savedAt:'', fmt:{ text:{}, names:{}, title:{}, head:{}, books:{}, bnames:{} }, fmtT:'text', fmtTouched:false };
+PG.syb = { term:'t1', medium:'en', doc:null, key:'', msg:'', timer:null, dirty:false, loaded:false, edits:{}, cat:{}, open:{}, pick:{}, exp:{}, store:{ sessions:{} }, mode:null, savedAt:'', fmt:{ text:{}, names:{}, title:{}, head:{}, books:{}, bnames:{} }, fmtT:'text', sel:{}, fmtTouched:false };
 function pgSbKey(){ const m = pgSenior(PG.cls) ? PG.syb.medium : 'all'; return 'syllabus__' + (PG.cls+'__'+m).replace(/[\/\s]+/g,'_'); }
 function pgSbNew(){
   const y = new Date().getFullYear(), subs = (DB.classSubjects[PG.cls] || []);
@@ -4777,21 +4777,41 @@ function pgSbCss(f, o){
   const al = f.align || o.align; if(al) c += 'text-align:' + al + ';';
   return c;
 }
-function pgSbCur(){ const S = PG.syb, T = S.fmtT; if(T.indexOf('b:') === 0) return S.fmt.books[T.slice(2)] || {}; if(T.indexOf('n:') === 0) return (S.fmt.bnames || {})[T.slice(2)] || {}; return S.fmt[T] || {}; }
-function pgSbCurW(){ const S = PG.syb, T = S.fmtT; if(T.indexOf('b:') === 0){ const id = T.slice(2); return (S.fmt.books[id] = S.fmt.books[id] || {}); } if(T.indexOf('n:') === 0){ const id = T.slice(2); S.fmt.bnames = S.fmt.bnames || {}; return (S.fmt.bnames[id] = S.fmt.bnames[id] || {}); } return (S.fmt[T] = S.fmt[T] || {}); }
-function pgSbPickT(t){
-  const S = PG.syb; if(S.fmtT === t) return;
-  S.fmtT = t;
-  const tb = document.getElementById('pgSbTb'); if(tb && S.doc) tb.innerHTML = pgSbToolbarHTML(S.doc);
-  document.querySelectorAll('[data-sbt]').forEach(e=>{ e.style.outline = e.getAttribute('data-sbt') === t ? '2px solid #2a6df4' : ''; });
+function pgSbSelKeys(){ const S = PG.syb, ks = Object.keys(S.sel || {}); return ks.length ? ks : [S.fmtT]; }
+function pgSbCur(T){ const S = PG.syb; T = T || pgSbSelKeys()[0]; if(T.indexOf('b:') === 0) return S.fmt.books[T.slice(2)] || {}; if(T.indexOf('n:') === 0) return (S.fmt.bnames || {})[T.slice(2)] || {}; return S.fmt[T] || {}; }
+function pgSbCurW(T){ const S = PG.syb; T = T || S.fmtT; if(T.indexOf('b:') === 0){ const id = T.slice(2); return (S.fmt.books[id] = S.fmt.books[id] || {}); } if(T.indexOf('n:') === 0){ const id = T.slice(2); S.fmt.bnames = S.fmt.bnames || {}; return (S.fmt.bnames[id] = S.fmt.bnames[id] || {}); } return (S.fmt[T] = S.fmt[T] || {}); }
+function pgSbRefreshSel(){
+  const S = PG.syb, ks = pgSbSelKeys(), tb = document.getElementById('pgSbTb'); if(tb && S.doc) tb.innerHTML = pgSbToolbarHTML(S.doc);
+  document.querySelectorAll('[data-sbt]').forEach(e=>{ e.style.outline = ks.indexOf(e.getAttribute('data-sbt')) >= 0 ? '2px solid #2a6df4' : ''; });
+  document.querySelectorAll('[data-sbc]').forEach(e=>{ e.checked = ks.indexOf(e.getAttribute('data-sbc')) >= 0; });
 }
-function pgSbFmtTarget(v){ PG.syb.fmtT = v; pgRenderBody(); }
-function pgSbFmt(k, v){ const S = PG.syb, c = pgSbCurW(); if(v === '' || v === null) delete c[k]; else c[k] = v; S.fmtTouched = true; pgSbSaveSoon(); pgRenderBody(); }
-function pgSbFmtToggle(k){ const c = pgSbCurW(), defB = (PG.syb.fmtT==='text' || PG.syb.fmtT.indexOf('b:')===0) ? false : true, cur = c[k] === undefined ? (k==='bold' ? defB : false) : !!c[k]; pgSbFmt(k, !cur); }
-function pgSbFmtReset(){ const S = PG.syb, T = S.fmtT; if(T.indexOf('b:') === 0) delete S.fmt.books[T.slice(2)]; else if(T.indexOf('n:') === 0) delete (S.fmt.bnames || {})[T.slice(2)]; else S.fmt[T] = {}; S.fmtTouched = true; pgSbSaveSoon(); pgRenderBody(); }
+function pgSbPickT(t, ev){                       // click a box = choose it; Ctrl / Shift / Cmd + click = add or remove it
+  const S = PG.syb, multi = ev && (ev.ctrlKey || ev.metaKey || ev.shiftKey);
+  if(multi){ const cur = pgSbSelKeys(); S.sel = {}; cur.forEach(k=>{ if(/^[nb]:/.test(k)) S.sel[k] = true; }); if(S.sel[t]) delete S.sel[t]; else S.sel[t] = true; }
+  else S.sel = (S.sel[t] && Object.keys(S.sel).length > 1) ? S.sel : (function(){ const o = {}; o[t] = true; return o; })();
+  const ks = Object.keys(S.sel); S.fmtT = ks.length ? ks[ks.length - 1] : 'text';
+  pgSbRefreshSel();
+}
+function pgSbToggleSel(t){                       // the little tick boxes (works on phones too)
+  const S = PG.syb, cur = pgSbSelKeys(); S.sel = {}; cur.forEach(k=>{ if(/^[nb]:/.test(k)) S.sel[k] = true; });
+  if(S.sel[t]) delete S.sel[t]; else S.sel[t] = true;
+  const ks = Object.keys(S.sel); S.fmtT = ks.length ? ks[ks.length - 1] : 'text';
+  pgSbRefreshSel();
+}
+function pgSbSelectAll(kind){
+  const S = PG.syb, d = S.doc; if(!d) return;
+  S.sel = {}; d.books.forEach(b=>{ if(kind !== 'b') S.sel['n:' + b.id] = true; if(kind !== 'n') S.sel['b:' + b.id] = true; });
+  const ks = Object.keys(S.sel); S.fmtT = ks.length ? ks[ks.length - 1] : 'text'; pgRenderBody();
+}
+function pgSbSelClear(){ PG.syb.sel = {}; PG.syb.fmtT = 'text'; pgRenderBody(); }
+function pgSbFmtTarget(v){ if(!v) return; PG.syb.sel = {}; PG.syb.fmtT = v; pgRenderBody(); }
+function pgSbFmt(k, v){ const S = PG.syb; pgSbSelKeys().forEach(t=>{ const c = pgSbCurW(t); if(v === '' || v === null) delete c[k]; else c[k] = v; }); S.fmtTouched = true; pgSbSaveSoon(); pgRenderBody(); }
+function pgSbDefBold(t){ return !(t === 'text' || t.indexOf('b:') === 0); }
+function pgSbFmtToggle(k){ const t0 = pgSbSelKeys()[0], c0 = pgSbCur(t0), cur = c0[k] === undefined ? (k === 'bold' ? pgSbDefBold(t0) : false) : !!c0[k]; pgSbFmt(k, !cur); }
+function pgSbFmtReset(){ const S = PG.syb; pgSbSelKeys().forEach(T=>{ if(T.indexOf('b:') === 0) delete S.fmt.books[T.slice(2)]; else if(T.indexOf('n:') === 0) delete (S.fmt.bnames || {})[T.slice(2)]; else S.fmt[T] = {}; }); S.fmtTouched = true; pgSbSaveSoon(); pgRenderBody(); }
 function pgSbToolbarHTML(d){
-  const S = PG.syb, T = S.fmtT, c = pgSbCur(), isText = (T === 'text' || T.indexOf('b:') === 0);
-  const defB = !isText, B = c.bold === undefined ? defB : !!c.bold, I = !!c.italic, U = !!c.underline, al = c.align || '';
+  const S = PG.syb, keys = pgSbSelKeys(), T = keys[0], c = pgSbCur(T), many = keys.length > 1, isText = keys.every(k=>k === 'text' || k.indexOf('b:') === 0);
+  const defB = pgSbDefBold(T), B = c.bold === undefined ? defB : !!c.bold, I = !!c.italic, U = !!c.underline, al = c.align || '';
   const whole = [['text','All syllabus boxes'],['names','All book names'],['title','Heading line'],['head','Table header row']], single = [].concat(...d.books.map(b=>[['n:' + b.id, 'Name box: ' + b.name], ['b:' + b.id, 'Syllabus box: ' + b.name]]));
   const sel = 'padding:5px;border:1px solid var(--line);border-radius:6px;', tg = (on, label, fn, title, extra) => `<button type="button" title="${title}" class="tag-btn ${on?'':'ghost'}" style="min-width:34px;padding:4px 8px;${extra||''}" onclick="${fn}">${label}</button>`;
   const sizes = ['8','9','10','11','12','13','14','16','18','20','22','24','26','28','32'];
@@ -4799,7 +4819,8 @@ function pgSbToolbarHTML(d){
   return `<div style="border:1px solid var(--line);border-radius:8px;background:#f7f9fc;padding:8px 10px;margin:0 0 12px;">
     <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
       <b style="font-size:13px;">Format:</b>
-      <select style="${sel}max-width:260px;" onchange="pgSbFmtTarget(this.value)"><optgroup label="Whole sections">${whole.map(x=>`<option value="${esc(x[0])}" ${T===x[0]?'selected':''}>${esc(x[1])}</option>`).join('')}</optgroup><optgroup label="One box only (click a box to choose it)">${single.map(x=>`<option value="${esc(x[0])}" ${T===x[0]?'selected':''}>${esc(x[1])}</option>`).join('')}</optgroup></select>
+      <select style="${sel}max-width:260px;" onchange="pgSbFmtTarget(this.value)">${many ? `<option value="" selected>${keys.length} boxes selected</option>` : ''}<optgroup label="Whole sections">${whole.map(x=>`<option value="${esc(x[0])}" ${!many&&T===x[0]?'selected':''}>${esc(x[1])}</option>`).join('')}</optgroup><optgroup label="One box only (click a box to choose it)">${single.map(x=>`<option value="${esc(x[0])}" ${!many&&T===x[0]?'selected':''}>${esc(x[1])}</option>`).join('')}</optgroup></select>
+      <button type="button" class="tag-btn ghost" style="padding:3px 9px;font-size:12px;" onclick="pgSbSelectAll('n')">All names</button><button type="button" class="tag-btn ghost" style="padding:3px 9px;font-size:12px;" onclick="pgSbSelectAll('b')">All syllabus boxes</button><button type="button" class="tag-btn ghost" style="padding:3px 9px;font-size:12px;" onclick="pgSbSelectAll('all')">All boxes</button>${many ? `<button type="button" class="tag-btn ghost" style="padding:3px 9px;font-size:12px;" onclick="pgSbSelClear()">Clear selection</button>` : ''}
       <select title="Font" style="${sel}" onchange="pgSbFmt('family',this.value)">${PG_SB_FONTS.map(x=>`<option value="${x[0]}" ${(c.family||'')===x[0]?'selected':''}>${x[1]}</option>`).join('')}</select>
       <select title="Size" style="${sel}" onchange="pgSbFmt('size',this.value)"><option value="${isText?'auto':''}" ${(!c.size||c.size==='auto')?'selected':''}>${isText?'Auto (fits A4)':'Default size'}</option>${sizes.map(z=>`<option value="${z}" ${c.size===z?'selected':''}>${z} pt</option>`).join('')}</select>
       <label title="Font colour" style="display:inline-flex;align-items:center;gap:3px;font-weight:700;"><span style="border-bottom:3px solid ${cv};line-height:1;">A</span><input type="color" value="${cv}" style="width:30px;height:26px;padding:0;border:1px solid var(--line);" onchange="pgSbFmt('color',this.value)"></label>
@@ -4810,7 +4831,7 @@ function pgSbToolbarHTML(d){
       <span style="width:8px;"></span>
       ${tg(al==='left','&#8676;',"pgSbFmt('align','left')",'Align left')}${tg(al==='center','&#8801;',"pgSbFmt('align','center')",'Centre')}${tg(al==='right','&#8677;',"pgSbFmt('align','right')",'Align right')}${tg(al==='justify','&#9776;',"pgSbFmt('align','justify')",'Justify')}
       <button type="button" class="tag-btn ghost" style="padding:4px 10px;font-size:12px;" onclick="pgSbFmtReset()">Reset this</button>
-      <small style="color:var(--muted);margin-left:6px;"><b>Click any box</b> (a book name or a syllabus box) to choose it, then set its font, size, colour, bold / italic / underline and alignment, like Excel. Each box can look different. Everything applies to the printed syllabus too. <b>Auto</b> size fits all books on one A4 page.</small>
+      <small style="color:var(--muted);margin-left:6px;"><b>Click a box</b> to choose it. To choose <b>several boxes</b> hold <b>Ctrl</b> (or Shift) and click more boxes, or tick the little <b>select</b> tick-boxes, or use <b>All names / All syllabus boxes / All boxes</b>. Then set font, size, colour, fill, bold / italic / underline and alignment once &mdash; it applies to every selected box. Everything also applies to the printed syllabus. <b>Auto</b> size fits all books on one A4 page.</small>
     </div></div>`;
 }
 function pgSbSaveSoon(){ PG.syb.dirty = true; if(!PG.syb.loaded) return; clearTimeout(PG.syb.timer); PG.syb.timer = setTimeout(pgSbSave, 500); }
@@ -4979,7 +5000,7 @@ function pgSbHTML(){
   const inp = 'width:100%;padding:7px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:14px;';
   const filled = d.books.filter(b=>((d.terms[T] || {})[b.id] || '').trim()).length;
   const sess = Array.from(new Set(Object.keys(S.store.sessions || {}).concat([d.session]))).sort();
-  const baseFam = pgSbFontCSS(ur), boxCss = id => pgSbCss(Object.assign({}, S.fmt.text, S.fmt.books[id] || {}), { fam:baseFam, size:'14px', bold:false }) + (ur ? 'line-height:1.9;' : ''), nameCss = id => pgSbCss(Object.assign({}, S.fmt.names, (S.fmt.bnames || {})[id] || {}), { fam:baseFam, size:'14px', bold:true }), sel = t => S.fmtT === t ? 'outline:2px solid #2a6df4;' : '';
+  const baseFam = pgSbFontCSS(ur), boxCss = id => pgSbCss(Object.assign({}, S.fmt.text, S.fmt.books[id] || {}), { fam:baseFam, size:'14px', bold:false }) + (ur ? 'line-height:1.9;' : ''), nameCss = id => pgSbCss(Object.assign({}, S.fmt.names, (S.fmt.bnames || {})[id] || {}), { fam:baseFam, size:'14px', bold:true }), selK = pgSbSelKeys(), sel = t => selK.indexOf(t) >= 0 ? 'outline:2px solid #2a6df4;' : '', chk = t => `<input type="checkbox" data-sbc="${t}" title="Select this box for formatting" style="width:auto;margin:0 4px 0 0;" ${selK.indexOf(t) >= 0 ? 'checked' : ''} onchange="pgSbToggleSel('${t}')">`;
   const mainBtn = view ? '<button type="button" class="btn-gold" onclick="pgSbEdit()">&#9998; Edit</button>' : '<button type="button" class="btn-gold" onclick="pgSbSaveNow()">&#10003; Save</button>';
   return `
     ${S.msg}
@@ -4995,11 +5016,11 @@ function pgSbHTML(){
     <div id="pgSbTb">${pgSbToolbarHTML(d)}</div>
     <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px;">${mainBtn}${view ? '' : `<button type="button" class="tag-btn" onclick="pgSbAnnual()">Annual = 1st + 2nd Term</button>`}</div>
     ${d.books.map(b=>{ const txt = (d.terms[T] || {})[b.id] || '';
-      if(view) return `<div style="border:1px solid var(--line);border-radius:8px;background:#fff;padding:8px 10px;margin-bottom:8px;display:grid;grid-template-columns:minmax(120px,22%) 1fr;gap:10px;"><div dir="auto" data-sbt="n:${b.id}" onclick="pgSbPickT('n:${b.id}')" style="cursor:pointer;${nameCss(b.id)}${sel('n:'+b.id)}">${esc(b.name)}</div><div dir="auto" data-sbt="b:${b.id}" onclick="pgSbPickT('b:${b.id}')" style="cursor:pointer;white-space:pre-wrap;${boxCss(b.id)}${txt.trim()?'':'color:var(--muted);'}${sel('b:'+b.id)}">${txt.trim() ? esc(txt) : '&mdash; not written &mdash;'}</div></div>`;
+      if(view) return `<div style="border:1px solid var(--line);border-radius:8px;background:#fff;padding:8px 10px;margin-bottom:8px;display:grid;grid-template-columns:minmax(120px,22%) 1fr;gap:10px;"><div style="display:flex;gap:4px;align-items:flex-start;">${chk('n:'+b.id)}<div dir="auto" data-sbt="n:${b.id}" onmousedown="pgSbPickT('n:${b.id}',event)" style="cursor:pointer;flex:1;${nameCss(b.id)}${sel('n:'+b.id)}">${esc(b.name)}</div></div><div><label style="font-size:11px;color:var(--muted);display:block;">${chk('b:'+b.id)} select</label><div dir="auto" data-sbt="b:${b.id}" onmousedown="pgSbPickT('b:${b.id}',event)" style="cursor:pointer;white-space:pre-wrap;${boxCss(b.id)}${txt.trim()?'':'color:var(--muted);'}${sel('b:'+b.id)}">${txt.trim() ? esc(txt) : '&mdash; not written &mdash;'}</div></div></div>`;
       return `<div style="border:1px solid var(--line);border-radius:8px;background:#fff;padding:8px 10px;margin-bottom:8px;">
       <div style="display:grid;grid-template-columns:minmax(120px,22%) 1fr auto;gap:10px;align-items:start;">
-        <div><input dir="auto" data-sbt="n:${b.id}" onfocus="pgSbPickT('n:${b.id}')" value="${esc(b.name)}" style="${inp}${nameCss(b.id)}${sel('n:'+b.id)}" onchange="pgSbName('${b.id}',this.value)"></div>
-        <textarea rows="3" dir="auto" placeholder="${ur?'\u0627\u0633 \u06a9\u062a\u0627\u0628 \u06a9\u0627 \u0646\u0635\u0627\u0628 \u0644\u06a9\u06be\u06cc\u06ba':'Write the syllabus of this book here'}" data-sbt="b:${b.id}" onfocus="pgSbPickT('b:${b.id}')" style="${inp}${boxCss(b.id)}${sel('b:'+b.id)}" oninput="pgSbText('${b.id}',this.value)">${esc(txt)}</textarea>
+        <div style="display:flex;gap:4px;align-items:center;">${chk('n:'+b.id)}<input dir="auto" data-sbt="n:${b.id}" onmousedown="pgSbPickT('n:${b.id}',event)" value="${esc(b.name)}" style="${inp}${nameCss(b.id)}${sel('n:'+b.id)}" onchange="pgSbName('${b.id}',this.value)"></div>
+        <div><label style="font-size:11px;color:var(--muted);display:block;">${chk('b:'+b.id)} select</label><textarea rows="3" dir="auto" placeholder="${ur?'\u0627\u0633 \u06a9\u062a\u0627\u0628 \u06a9\u0627 \u0646\u0635\u0627\u0628 \u0644\u06a9\u06be\u06cc\u06ba':'Write the syllabus of this book here'}" data-sbt="b:${b.id}" onmousedown="pgSbPickT('b:${b.id}',event)" style="${inp}${boxCss(b.id)}${sel('b:'+b.id)}" oninput="pgSbText('${b.id}',this.value)">${esc(txt)}</textarea></div>
         <button type="button" class="tag-btn ghost" title="Remove this book" style="padding:3px 9px;" onclick="pgSbDel('${b.id}')">&times;</button>
       </div></div>`; }).join('')}
     ${view ? '' : `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0;"><input id="pgSbNewBook" dir="auto" placeholder="Add another book (e.g. Islamiyat Lazmi)" style="${inp}max-width:320px;"><button type="button" class="tag-btn" onclick="pgSbAdd()">+ Add book</button></div>`}
