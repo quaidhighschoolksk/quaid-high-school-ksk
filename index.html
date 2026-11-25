@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Quaid High School KSK</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;900&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&family=Noto+Nastaliq+Urdu:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;900&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&family=Noto+Nastaliq+Urdu:wght@400;700&family=Roboto:wght@400;700&family=Open+Sans:wght@400;700&family=Lora:wght@400;700&family=Noto+Naskh+Arabic:wght@400;700&family=Lateef:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -4717,7 +4717,7 @@ function pgNeedScope(){
 }
 /* ---------------- SYLLABUS: term-wise, book-wise, one printed page ---------------- */
 const PG_TERMS = [['t1','1st Term','\u067e\u06c1\u0644\u0627 \u0679\u0631\u0645'],['t2','2nd Term','\u062f\u0648\u0633\u0631\u0627 \u0679\u0631\u0645'],['ta','Annual','\u0633\u0627\u0644\u0627\u0646\u06c1']];
-PG.syb = { term:'t1', medium:'en', doc:null, key:'', msg:'', timer:null, dirty:false, loaded:false, edits:{}, cat:{}, open:{}, pick:{}, exp:{} };
+PG.syb = { term:'t1', medium:'en', doc:null, key:'', msg:'', timer:null, dirty:false, loaded:false, edits:{}, cat:{}, open:{}, pick:{}, exp:{}, store:{ sessions:{} }, mode:null, savedAt:'', fmt:{ text:{}, names:{}, title:{}, head:{}, books:{} }, fmtT:'text', fmtTouched:false };
 function pgSbKey(){ const m = pgSenior(PG.cls) ? PG.syb.medium : 'all'; return 'syllabus__' + (PG.cls+'__'+m).replace(/[\/\s]+/g,'_'); }
 function pgSbNew(){
   const y = new Date().getFullYear(), subs = (DB.classSubjects[PG.cls] || []);
@@ -4726,12 +4726,12 @@ function pgSbNew(){
 async function pgSbLoad(){
   if(!pgOK() || !PG.cls) return;
   const S = PG.syb, key = pgSbKey();
-  S.key = key; S.loaded = false; S.dirty = false; S.edits = {};
+  S.key = key; S.loaded = false; S.dirty = false; S.edits = {}; S.mode = null; S.store = { sessions:{} }; S.fmt = pgSbFmtNew(); S.fmtTouched = false;
   S.doc = pgSbNew(); S.doc.terms = { t1:{}, t2:{}, ta:{} };      // empty editor is shown immediately
   let remote = null, failed = false;
   try{
     const d = await fsDb.collection(PG_COLLECTION).doc(key).get();
-    if(d.exists) remote = Object.assign(pgSbNew(), d.data());
+    if(d.exists){ const px = pgSbFromData(d.data()); if(px){ remote = px.doc; S.store = px.store; if(px.fmt && !S.fmtTouched) S.fmt = pgSbFmtNorm(px.fmt); } }
   }catch(e){ console.error(e); failed = true; }
   if(S.key !== key) return;                               // class / medium changed meanwhile
   if(remote){
@@ -4744,14 +4744,116 @@ async function pgSbLoad(){
   if(S.dirty && !failed) await pgSbSave();
   pgRenderBody();
 }
+function pgSbFromData(x){
+  const sessions = {};
+  if(x && x.sessions){ Object.keys(x.sessions).forEach(k=>{ sessions[k] = x.sessions[k]; }); }
+  else if(x && x.books){ sessions[x.session || pgSbNew().session] = { books:x.books, terms:x.terms }; }
+  const keys = Object.keys(sessions); if(!keys.length) return null;
+  const cur = (x.current && sessions[x.current]) ? x.current : ((x.session && sessions[x.session]) ? x.session : keys[0]), base = pgSbNew();
+  return { store:{ sessions }, fmt:x.fmt || null, doc:Object.assign(base, { session:cur, books:sessions[cur].books || base.books, terms:Object.assign({ t1:{}, t2:{}, ta:{} }, sessions[cur].terms || {}) }) };
+}
+const PG_SB_FONTS = [['','Default'],['times','Times New Roman'],['arial','Arial'],['calibri','Calibri'],['georgia','Georgia'],['verdana','Verdana'],['tahoma','Tahoma'],['roboto','Roboto'],['opensans','Open Sans'],['lora','Lora (book style)'],['courier','Courier New'],['nastaliq','Urdu: Nastaliq'],['naskh','Urdu: Naskh'],['lateef','Urdu: Lateef'],['jameel','Urdu: Jameel Noori']];
+const PG_SB_FONT_CSS = { times:"'Times New Roman',Times,'Noto Nastaliq Urdu',serif", arial:"Arial,Helvetica,'Noto Nastaliq Urdu',sans-serif", calibri:"Calibri,Carlito,'Segoe UI','Noto Nastaliq Urdu',sans-serif", georgia:"Georgia,'Noto Nastaliq Urdu',serif", verdana:"Verdana,Geneva,'Noto Nastaliq Urdu',sans-serif", tahoma:"Tahoma,Geneva,'Noto Nastaliq Urdu',sans-serif", roboto:"'Roboto',Arial,'Noto Nastaliq Urdu',sans-serif", opensans:"'Open Sans',Arial,'Noto Nastaliq Urdu',sans-serif", lora:"'Lora',Georgia,'Noto Nastaliq Urdu',serif", courier:"'Courier New',monospace", nastaliq:"'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif", naskh:"'Noto Naskh Arabic','Lateef','Noto Nastaliq Urdu',serif", lateef:"'Lateef','Noto Naskh Arabic','Noto Nastaliq Urdu',serif", jameel:"'Jameel Noori Nastaleeq','Noto Nastaliq Urdu',serif" };
+const PG_SB_SIZES = ['9','10','11','12','13','14','16','18'];
+function pgSbFmtNew(){ return { text:{}, names:{}, title:{}, head:{}, books:{} }; }
+function pgSbFmtNorm(x){
+  const n = pgSbFmtNew(); if(!x) return n;
+  if(x.text || x.names || x.title || x.head || x.books){ ['text','names','title','head','books'].forEach(k=>{ n[k] = Object.assign({}, x[k] || {}); }); return n; }
+  if(x.family) n.text.family = x.family;                  // older saved format: family / size / bold for the syllabus text
+  if(x.size && x.size !== 'auto') n.text.size = x.size;
+  if(x.bold) n.text.bold = true;
+  return n;
+}
+function pgSbFontCSS(ur){ return ur ? PG_UR_FONT : "'Times New Roman',Times,'Noto Nastaliq Urdu',serif"; }
+function pgSbCss(f, o){
+  f = f || {};
+  const fam = PG_SB_FONT_CSS[f.family] || o.fam, size = (f.size && f.size !== 'auto') ? f.size + 'pt' : o.size;
+  const bold = f.bold === undefined ? !!o.bold : !!f.bold;
+  let c = 'font-family:' + fam + ';font-size:' + size + ';font-weight:' + (bold ? 700 : 400) + ';';
+  if(f.italic) c += 'font-style:italic;';
+  if(f.underline) c += 'text-decoration:underline;';
+  if(f.color) c += 'color:' + f.color + ';';
+  if(f.bg || o.bg) c += 'background:' + (f.bg || o.bg) + ';';
+  const al = f.align || o.align; if(al) c += 'text-align:' + al + ';';
+  return c;
+}
+function pgSbCur(){ const S = PG.syb; if(S.fmtT.indexOf('b:') === 0){ const id = S.fmtT.slice(2); return S.fmt.books[id] || {}; } return S.fmt[S.fmtT] || {}; }
+function pgSbCurW(){ const S = PG.syb; if(S.fmtT.indexOf('b:') === 0){ const id = S.fmtT.slice(2); return (S.fmt.books[id] = S.fmt.books[id] || {}); } return (S.fmt[S.fmtT] = S.fmt[S.fmtT] || {}); }
+function pgSbFmtTarget(v){ PG.syb.fmtT = v; pgRenderBody(); }
+function pgSbFmt(k, v){ const S = PG.syb, c = pgSbCurW(); if(v === '' || v === null) delete c[k]; else c[k] = v; S.fmtTouched = true; pgSbSaveSoon(); pgRenderBody(); }
+function pgSbFmtToggle(k){ const c = pgSbCurW(), defB = (PG.syb.fmtT==='text' || PG.syb.fmtT.indexOf('b:')===0) ? false : true, cur = c[k] === undefined ? (k==='bold' ? defB : false) : !!c[k]; pgSbFmt(k, !cur); }
+function pgSbFmtReset(){ const S = PG.syb; if(S.fmtT.indexOf('b:') === 0) delete S.fmt.books[S.fmtT.slice(2)]; else S.fmt[S.fmtT] = {}; S.fmtTouched = true; pgSbSaveSoon(); pgRenderBody(); }
+function pgSbToolbarHTML(d){
+  const S = PG.syb, T = S.fmtT, c = pgSbCur(), isText = (T === 'text' || T.indexOf('b:') === 0);
+  const defB = !isText, B = c.bold === undefined ? defB : !!c.bold, I = !!c.italic, U = !!c.underline, al = c.align || '';
+  const targets = [['text','Syllabus text (all books)'],['names','Book names'],['title','Heading line'],['head','Table header row']].concat(d.books.map(b=>['b:' + b.id, 'Only: ' + b.name]));
+  const sel = 'padding:5px;border:1px solid var(--line);border-radius:6px;', tg = (on, label, fn, title, extra) => `<button type="button" title="${title}" class="tag-btn ${on?'':'ghost'}" style="min-width:34px;padding:4px 8px;${extra||''}" onclick="${fn}">${label}</button>`;
+  const sizes = ['8','9','10','11','12','13','14','16','18','20','22','24','26','28','32'];
+  const cv = c.color || '#000000', bv = c.bg || '#ffffff';
+  return `<div style="border:1px solid var(--line);border-radius:8px;background:#f7f9fc;padding:8px 10px;margin:0 0 12px;">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+      <b style="font-size:13px;">Format:</b>
+      <select style="${sel}max-width:230px;" onchange="pgSbFmtTarget(this.value)">${targets.map(x=>`<option value="${esc(x[0])}" ${T===x[0]?'selected':''}>${esc(x[1])}</option>`).join('')}</select>
+      <select title="Font" style="${sel}" onchange="pgSbFmt('family',this.value)">${PG_SB_FONTS.map(x=>`<option value="${x[0]}" ${(c.family||'')===x[0]?'selected':''}>${x[1]}</option>`).join('')}</select>
+      <select title="Size" style="${sel}" onchange="pgSbFmt('size',this.value)"><option value="${isText?'auto':''}" ${(!c.size||c.size==='auto')?'selected':''}>${isText?'Auto (fits A4)':'Default size'}</option>${sizes.map(z=>`<option value="${z}" ${c.size===z?'selected':''}>${z} pt</option>`).join('')}</select>
+      <label title="Font colour" style="display:inline-flex;align-items:center;gap:3px;font-weight:700;"><span style="border-bottom:3px solid ${cv};line-height:1;">A</span><input type="color" value="${cv}" style="width:30px;height:26px;padding:0;border:1px solid var(--line);" onchange="pgSbFmt('color',this.value)"></label>
+      <label title="Highlight / fill colour" style="display:inline-flex;align-items:center;gap:3px;font-weight:700;"><span style="background:${bv};border:1px solid var(--line);padding:0 4px;">&#9679;</span><input type="color" value="${bv}" style="width:30px;height:26px;padding:0;border:1px solid var(--line);" onchange="pgSbFmt('bg',this.value)"></label>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;">
+      ${tg(B,'<b>B</b>',"pgSbFmtToggle('bold')",'Bold')}${tg(I,'<i>I</i>',"pgSbFmtToggle('italic')",'Italic')}${tg(U,'<u>U</u>',"pgSbFmtToggle('underline')",'Underline')}
+      <span style="width:8px;"></span>
+      ${tg(al==='left','&#8676;',"pgSbFmt('align','left')",'Align left')}${tg(al==='center','&#8801;',"pgSbFmt('align','center')",'Centre')}${tg(al==='right','&#8677;',"pgSbFmt('align','right')",'Align right')}${tg(al==='justify','&#9776;',"pgSbFmt('align','justify')",'Justify')}
+      <button type="button" class="tag-btn ghost" style="padding:4px 10px;font-size:12px;" onclick="pgSbFmtReset()">Reset this</button>
+      <small style="color:var(--muted);margin-left:6px;">Choose what to format, then set font, size, colour, bold / italic / underline and alignment, like Excel. Everything applies to the printed syllabus too. <b>Auto</b> size fits all books on one A4 page.</small>
+    </div></div>`;
+}
 function pgSbSaveSoon(){ PG.syb.dirty = true; if(!PG.syb.loaded) return; clearTimeout(PG.syb.timer); PG.syb.timer = setTimeout(pgSbSave, 500); }
 async function pgSbSave(){
-  if(!pgOK() || !PG.syb.doc || !PG.syb.loaded) return false;
-  try{ await fsDb.collection(PG_COLLECTION).doc(PG.syb.key).set(PG.syb.doc); const el = document.getElementById('pgSbStat'); if(el) el.textContent = 'Saved \u2713'; return true; }
-  catch(e){ console.error(e); alert('Save failed: ' + (e.message || 'permission denied')); return false; }
+  const S = PG.syb;
+  if(!pgOK() || !S.doc || !S.loaded) return false;
+  const d = S.doc, sessions = Object.assign({}, S.store.sessions || {});
+  sessions[d.session] = { books:d.books, terms:d.terms };
+  S.store.sessions = sessions;
+  try{
+    await fsDb.collection(PG_COLLECTION).doc(S.key).set({ cls:PG.cls, medium:d.medium, current:d.session, sessions, fmt:S.fmt });
+    S.savedAt = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+    const el = document.getElementById('pgSbStat'); if(el) el.textContent = 'Saved \u2713 ' + S.savedAt;
+    return true;
+  }catch(e){ console.error(e); alert('Save failed: ' + (e.message || 'permission denied')); return false; }
 }
-function pgSbSetTerm(t){ PG.syb.term = t; PG.syb.msg = ''; pgRenderBody(); }
-function pgSbSetMedium(m){ PG.syb.medium = m; PG.syb.doc = null; PG.syb.msg = ''; pgRenderBody(); }
+function pgSbHasText(){ const S = PG.syb, d = S.doc; return d.books.some(b=>((d.terms[S.term] || {})[b.id] || '').trim()); }
+function pgSbMode(){ return PG.syb.mode || (pgSbHasText() ? 'view' : 'edit'); }
+async function pgSbSaveNow(){
+  const S = PG.syb; if(pgSbWait()) return;
+  clearTimeout(S.timer);
+  if(!(await pgSbSave())) return;
+  S.msg = '<div class="msg-ok">Saved &#10003; ' + esc(S.savedAt) + ' &mdash; this syllabus is stored for session ' + esc(S.doc.session) + ' and stays here for next time. Press Edit to change it.</div>';
+  S.mode = pgSbHasText() ? 'view' : 'edit'; pgRenderBody();
+}
+function pgSbEdit(){ PG.syb.mode = 'edit'; PG.syb.msg = ''; pgRenderBody(); }
+function pgSbSetSession(name){
+  const S = PG.syb; if(pgSbWait()) return;
+  const x = (S.store.sessions || {})[name]; if(!x || name === S.doc.session) return;
+  S.store.sessions[S.doc.session] = { books:S.doc.books, terms:S.doc.terms };
+  S.doc = Object.assign({}, S.doc, { session:name, books:x.books || [], terms:Object.assign({ t1:{}, t2:{}, ta:{} }, x.terms || {}) });
+  S.mode = null; S.msg = ''; S.edits = {}; pgSbSaveSoon(); pgRenderBody();
+}
+async function pgSbNewSession(){
+  const S = PG.syb; if(pgSbWait()) return;
+  const cur = S.doc.session, m = String(cur).match(/^(\d{4})-(\d{2})$/), sug = m ? (+m[1] + 1) + '-' + String((+m[2] + 1) % 100).padStart(2,'0') : '';
+  const name = (prompt('Name of the new session (for example ' + sug + '):', sug) || '').trim();
+  if(!name) return;
+  if(name === cur || (S.store.sessions || {})[name]){ alert('That session already exists. Choose it from the Session list.'); return; }
+  const copy = confirm('Copy the current syllabus into "' + name + '" as a starting point?\n\nOK = copy it (then change what is different)\nCancel = start empty');
+  S.store.sessions[cur] = { books:S.doc.books, terms:S.doc.terms };
+  const base = pgSbNew();
+  S.doc = Object.assign({}, S.doc, { session:name, books: copy ? JSON.parse(JSON.stringify(S.doc.books)) : base.books, terms: copy ? JSON.parse(JSON.stringify(S.doc.terms)) : { t1:{}, t2:{}, ta:{} } });
+  S.store.sessions[name] = { books:S.doc.books, terms:S.doc.terms };
+  S.mode = 'edit'; S.edits = {}; S.msg = '<div class="msg-ok">New session ' + esc(name) + ' started' + (copy ? ' with a copy of ' + esc(cur) : '') + '. Edit it and press Save.</div>';
+  await pgSbSave(); pgRenderBody();
+}
+function pgSbSetTerm(t){ PG.syb.term = t; PG.syb.msg = ''; PG.syb.mode = null; pgRenderBody(); }
+function pgSbSetMedium(m){ PG.syb.medium = m; PG.syb.doc = null; PG.syb.msg = ''; PG.syb.mode = null; pgRenderBody(); }
 function pgSbText(id, v){ const d = PG.syb.doc, t = PG.syb.term; d.terms[t] = d.terms[t] || {}; d.terms[t][id] = v; PG.syb.edits[t + '|' + id] = v; pgSbSaveSoon(); }
 function pgSbWait(){ if(PG.syb.loaded) return false; alert('Please wait a moment, the saved syllabus is still loading.'); return true; }
 function pgSbName(id, v){ if(pgSbWait()) return; const b = PG.syb.doc.books.find(x=>x.id===id); if(b){ b.name = v.trim(); pgSbSaveSoon(); } }
@@ -4867,54 +4969,63 @@ function pgSbHTML(){
   if(!PG.cls) return '<div class="empty">Select a Class above first.</div>';
   const d = S.doc;
   if(!d || S.key !== pgSbKey()) return '<div class="empty">Opening&hellip;</div>';
-  const sen = pgSenior(PG.cls), ur = sen && S.medium === 'ur', T = S.term, U = 'font-family:' + PG_UR_FONT + ';';
+  const sen = pgSenior(PG.cls), ur = sen && S.medium === 'ur', T = S.term, U = 'font-family:' + PG_UR_FONT + ';', view = pgSbMode() === 'view';
   const inp = 'width:100%;padding:7px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:14px;';
   const filled = d.books.filter(b=>((d.terms[T] || {})[b.id] || '').trim()).length;
+  const sess = Array.from(new Set(Object.keys(S.store.sessions || {}).concat([d.session]))).sort();
+  const baseFam = pgSbFontCSS(ur), boxCss = id => pgSbCss(Object.assign({}, S.fmt.text, S.fmt.books[id] || {}), { fam:baseFam, size:'14px', bold:false }) + (ur ? 'line-height:1.9;' : ''), nameCss = pgSbCss(S.fmt.names, { fam:baseFam, size:'14px', bold:true });
+  const mainBtn = view ? '<button type="button" class="btn-gold" onclick="pgSbEdit()">&#9998; Edit</button>' : '<button type="button" class="btn-gold" onclick="pgSbSaveNow()">&#10003; Save</button>';
   return `
     ${S.msg}
     ${S.loaded ? '' : '<p class="note-inline" style="margin:0 0 8px;">Your earlier saved syllabus is being fetched in the background &mdash; you can start typing already.</p>'}
-    <p class="note-inline" style="margin:0 0 10px;">Write the syllabus <b>yourself in the box in front of each book</b>, for the term chosen above. Everything is saved as you type, and you can come back and edit or delete any text later. Print puts <b>all books on one page</b> (books left empty are skipped).</p>
-    ${sen ? `<div style="margin:0 0 10px;"><b>Medium:</b> ${[['en','English Medium'],['ur','Urdu Medium (\u0627\u0631\u062f\u0648)']].map(x=>`<button type="button" class="tag-btn ${S.medium===x[0]?'':'ghost'}" style="margin:0 6px;" onclick="pgSbSetMedium('${x[0]}')">${x[1]}</button>`).join('')} <button type="button" class="tag-btn ghost" style="padding:3px 10px;font-size:12px;" onclick="pgSbCopyOther()">Copy from ${ur?'English':'Urdu'} medium</button></div>` : ''}
+    <p class="note-inline" style="margin:0 0 10px;">${view ? 'This term&rsquo;s syllabus is <b>saved</b>. Press <b>Edit</b> to change it.' : 'Write the syllabus <b>in the box in front of each book</b> for the term chosen below, then press <b>Save</b> (it also saves by itself while you type).'} Every term is stored under its <b>session</b>, so next year you can start a new session and reuse it. Print puts <b>all books on one page</b>.</p>
+    ${sen ? `<div style="margin:0 0 10px;"><b>Medium:</b> ${[['en','English Medium'],['ur','Urdu Medium (\u0627\u0631\u062f\u0648)']].map(x=>`<button type="button" class="tag-btn ${S.medium===x[0]?'':'ghost'}" style="margin:0 6px;" onclick="pgSbSetMedium('${x[0]}')">${x[1]}</button>`).join('')} ${view ? '' : `<button type="button" class="tag-btn ghost" style="padding:3px 10px;font-size:12px;" onclick="pgSbCopyOther()">Copy from ${ur?'English':'Urdu'} medium</button>`}</div>` : ''}
     <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 10px;">
       ${PG_TERMS.map(x=>`<button type="button" class="tag-btn ${T===x[0]?'':'ghost'}" onclick="pgSbSetTerm('${x[0]}')">${x[1]}</button>`).join('')}
-      <span style="margin-left:auto;display:flex;gap:6px;align-items:center;"><label style="font-weight:600;">Session</label><input value="${esc(d.session||'')}" style="width:100px;padding:6px;border:1px solid var(--line);border-radius:6px;" onchange="pgSbSession(this.value)"></span>
+      <span style="margin-left:auto;display:flex;flex-wrap:wrap;gap:6px;align-items:center;"><label style="font-weight:600;">Session</label>
+        <select style="padding:6px;border:1px solid var(--line);border-radius:6px;" onchange="pgSbSetSession(this.value)">${sess.map(x=>`<option ${x===d.session?'selected':''}>${esc(x)}</option>`).join('')}</select>
+        <button type="button" class="tag-btn ghost" style="padding:3px 10px;font-size:12px;" onclick="pgSbNewSession()">+ New session</button></span>
     </div>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px;">
-      ${T==='ta' ? '' : ''}<button type="button" class="tag-btn" onclick="pgSbAnnual()">Annual = 1st + 2nd Term</button>
-    </div>
-    ${d.books.map(b=>`<div style="border:1px solid var(--line);border-radius:8px;background:#fff;padding:8px 10px;margin-bottom:8px;">
+    ${pgSbToolbarHTML(d)}
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px;">${mainBtn}${view ? '' : `<button type="button" class="tag-btn" onclick="pgSbAnnual()">Annual = 1st + 2nd Term</button>`}</div>
+    ${d.books.map(b=>{ const txt = (d.terms[T] || {})[b.id] || '';
+      if(view) return `<div style="border:1px solid var(--line);border-radius:8px;background:#fff;padding:8px 10px;margin-bottom:8px;display:grid;grid-template-columns:minmax(120px,22%) 1fr;gap:10px;"><div dir="auto" style="${nameCss}">${esc(b.name)}</div><div dir="auto" style="white-space:pre-wrap;${boxCss(b.id)}${txt.trim()?'':'color:var(--muted);'}">${txt.trim() ? esc(txt) : '&mdash; not written &mdash;'}</div></div>`;
+      return `<div style="border:1px solid var(--line);border-radius:8px;background:#fff;padding:8px 10px;margin-bottom:8px;">
       <div style="display:grid;grid-template-columns:minmax(120px,22%) 1fr auto;gap:10px;align-items:start;">
-        <div><input dir="auto" value="${esc(b.name)}" style="${inp}font-weight:700;${ur?U:''}" onchange="pgSbName('${b.id}',this.value)"></div>
-        <textarea rows="3" dir="auto" placeholder="${ur?'\u0627\u0633 \u06a9\u062a\u0627\u0628 \u06a9\u0627 \u0646\u0635\u0627\u0628 \u0644\u06a9\u06be\u06cc\u06ba':'Write the syllabus of this book here'}" style="${inp}${ur?U:''}" oninput="pgSbText('${b.id}',this.value)">${esc((d.terms[T]||{})[b.id]||'')}</textarea>
+        <div><input dir="auto" value="${esc(b.name)}" style="${inp}${nameCss}" onchange="pgSbName('${b.id}',this.value)"></div>
+        <textarea rows="3" dir="auto" placeholder="${ur?'\u0627\u0633 \u06a9\u062a\u0627\u0628 \u06a9\u0627 \u0646\u0635\u0627\u0628 \u0644\u06a9\u06be\u06cc\u06ba':'Write the syllabus of this book here'}" style="${inp}${boxCss(b.id)}" oninput="pgSbText('${b.id}',this.value)">${esc(txt)}</textarea>
         <button type="button" class="tag-btn ghost" title="Remove this book" style="padding:3px 9px;" onclick="pgSbDel('${b.id}')">&times;</button>
-      </div>
-    </div>`).join('')}
-    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0;"><input id="pgSbNewBook" dir="auto" placeholder="Add another book (e.g. Islamiyat Lazmi)" style="${inp}max-width:320px;"><button type="button" class="tag-btn" onclick="pgSbAdd()">+ Add book</button></div>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
-      <button type="button" class="btn-gold" onclick="pgSbPrint('${T}')">Print ${PG_TERMS.find(x=>x[0]===T)[1]} syllabus (${filled} book${filled===1?'':'s'})</button>
+      </div></div>`; }).join('')}
+    ${view ? '' : `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0;"><input id="pgSbNewBook" dir="auto" placeholder="Add another book (e.g. Islamiyat Lazmi)" style="${inp}max-width:320px;"><button type="button" class="tag-btn" onclick="pgSbAdd()">+ Add book</button></div>`}
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px;">
+      ${mainBtn}
+      <button type="button" class="tag-btn" onclick="pgSbPrint('${T}')">Print ${PG_TERMS.find(x=>x[0]===T)[1]} syllabus (${filled} book${filled===1?'':'s'})</button>
       <button type="button" class="tag-btn" onclick="pgSbPrint('all')">Print all three terms</button>
-      <span id="pgSbStat" style="font-size:12px;color:var(--muted);"></span>
+      <span id="pgSbStat" style="font-size:12px;color:var(--muted);">${S.savedAt ? 'Saved \u2713 ' + esc(S.savedAt) : ''}</span>
     </div>`;
 }
 function pgSbPageHTML(tk){
-  const d = PG.syb.doc, sen = pgSenior(PG.cls), ur = sen && PG.syb.medium === 'ur', T = PG_TERMS.find(x=>x[0]===tk);
-  const rows = d.books.map(b=>({ name:b.name, text:((d.terms[tk] || {})[b.id] || '').trim() })).filter(r=>r.text);
+  const S = PG.syb, d = S.doc, sen = pgSenior(PG.cls), ur = sen && S.medium === 'ur', T = PG_TERMS.find(x=>x[0]===tk), F = S.fmt;
+  const rows = d.books.map(b=>({ id:b.id, name:b.name, text:((d.terms[tk] || {})[b.id] || '').trim() })).filter(r=>r.text);
   if(!rows.length) return '';
   const L = rows.reduce((a,r)=>a + r.text.length + r.name.length + 30, 0);
   const fs = L<900 ? 14 : L<1500 ? 12.5 : L<2200 ? 11.5 : L<3200 ? 10.5 : L<4500 ? 9.5 : 8.5;
   const lab = ur ? { sr:'\u0646\u0645\u0628\u0631', bk:'\u06a9\u062a\u0627\u0628', sy:'\u0646\u0635\u0627\u0628', title:'\u0646\u0635\u0627\u0628' } : { sr:'Sr.', bk:'Book', sy:'Syllabus', title:'SYLLABUS' };
   const cls = PG_CLASS_LABEL[PG.cls] || PG.cls, med = sen ? (ur ? '\u0627\u0631\u062f\u0648 \u0645\u06cc\u0688\u06cc\u0645' : 'English Medium') : '';
-  const td = 'border:1px solid #000;padding:' + (fs>=12?6:4) + 'px 8px;vertical-align:top;';
-  return `<div class="pg-stu-sheet" style="display:flow-root;font-family:'Times New Roman',serif;color:#000;">
+  const base = pgSbFontCSS(ur), tSize = (F.text.size && F.text.size !== 'auto') ? parseFloat(F.text.size) * 1.333 : fs, sizeCss = (F.text.size && F.text.size !== 'auto') ? F.text.size + 'pt' : fs + 'px';
+  const td = 'border:1px solid #000;padding:' + (tSize>=12?6:4) + 'px 8px;vertical-align:top;';
+  const cName = pgSbCss(F.names, { fam:base, size:sizeCss, bold:true }), cHead = pgSbCss(F.head, { fam:base, size:sizeCss, bold:true, bg:'#e9eef7' });
+  const cTitle = pgSbCss(F.title, { fam:base, size:'19px', bold:true, align:'center' });
+  return `<div class="pg-stu-sheet" style="display:flow-root;font-family:${base};color:#000;">
     <div dir="ltr" style="display:flex;align-items:center;gap:14px;">
       <img src="${SCHOOL_LOGO}" alt="" style="width:66px;height:auto;flex:none;">
       <div style="flex:1;text-align:center;"><div style="font-family:'Playfair Display',serif;font-weight:800;font-size:27px;letter-spacing:.02em;text-transform:uppercase;line-height:1.15;">${esc(PG_SCHOOL.name)}</div>
         <div style="font-weight:700;font-size:15px;margin-top:2px;">${esc(PG_SCHOOL.place)}, ${PG_SCHOOL.phones.map(esc).join(' ')}</div></div>
     </div>
-    <div ${ur?'dir="rtl"':''} style="text-align:center;margin:10px 0 8px;font-weight:800;font-size:19px;${ur?'font-family:'+PG_UR_FONT+';line-height:1.9;':''}border-top:2px solid #000;border-bottom:2px solid #000;padding:4px 0;">${lab.title} &mdash; ${ur?T[2]:T[1]} &nbsp;|&nbsp; ${esc(cls)}${med?' &nbsp;|&nbsp; '+med:''}${d.session?' &nbsp;|&nbsp; '+esc(d.session):''}</div>
-    <table ${ur?'dir="rtl"':''} style="width:100%;border-collapse:collapse;font-size:${fs}px;line-height:${ur?1.9:1.35};${ur?'font-family:'+PG_UR_FONT+';':''}">
-      <tr style="background:#e9eef7;font-weight:700;"><td style="${td}width:7%;text-align:center;">${lab.sr}</td><td style="${td}width:24%;">${lab.bk}</td><td style="${td}">${lab.sy}</td></tr>
-      ${rows.map((r,i)=>`<tr style="page-break-inside:avoid;"><td style="${td}text-align:center;">${i+1}</td><td style="${td}font-weight:700;" dir="auto">${esc(r.name)}</td><td style="${td}white-space:pre-line;" dir="auto">${esc(r.text)}</td></tr>`).join('')}
+    <div ${ur?'dir="rtl"':''} style="margin:10px 0 8px;${ur?'line-height:1.9;':''}border-top:2px solid #000;border-bottom:2px solid #000;padding:4px 0;${cTitle}">${lab.title} &mdash; ${ur?T[2]:T[1]} &nbsp;|&nbsp; ${esc(cls)}${med?' &nbsp;|&nbsp; '+med:''}${d.session?' &nbsp;|&nbsp; '+esc(d.session):''}</div>
+    <table ${ur?'dir="rtl"':''} style="width:100%;border-collapse:collapse;line-height:${ur?1.9:1.35};">
+      <tr><td style="${td}${cHead}width:7%;${F.head.align?'':'text-align:center;'}">${lab.sr}</td><td style="${td}${cHead}width:24%;">${lab.bk}</td><td style="${td}${cHead}">${lab.sy}</td></tr>
+      ${rows.map((r,i)=>`<tr style="page-break-inside:avoid;"><td style="${td}font-size:${sizeCss};text-align:center;">${i+1}</td><td style="${td}${cName}" dir="auto">${esc(r.name)}</td><td style="${td}white-space:pre-line;${pgSbCss(Object.assign({}, F.text, F.books[r.id] || {}), { fam:base, size:sizeCss, bold:false })}" dir="auto">${esc(r.text)}</td></tr>`).join('')}
     </table>
   </div>`;
 }
