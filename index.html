@@ -4718,20 +4718,20 @@ function pgNeedScope(){
 /* ---------------- SYLLABUS: term-wise, book-wise, one printed page ---------------- */
 const PG_TERMS = [['t1','1st Term','\u067e\u06c1\u0644\u0627 \u0679\u0631\u0645'],['t2','2nd Term','\u062f\u0648\u0633\u0631\u0627 \u0679\u0631\u0645'],['ta','Annual','\u0633\u0627\u0644\u0627\u0646\u06c1']];
 PG.syb = { term:'t1', medium:'en', doc:null, key:'', msg:'', timer:null, dirty:false, loaded:false, edits:{}, cat:{}, open:{}, pick:{}, exp:{} };
-function pgSylKey(){ const m = pgSenior(PG.cls) ? PG.syb.medium : 'all'; return 'syllabus__' + (PG.cls+'__'+m).replace(/[\/\s]+/g,'_'); }
-function pgSylNew(){
+function pgSbKey(){ const m = pgSenior(PG.cls) ? PG.syb.medium : 'all'; return 'syllabus__' + (PG.cls+'__'+m).replace(/[\/\s]+/g,'_'); }
+function pgSbNew(){
   const y = new Date().getFullYear(), subs = (DB.classSubjects[PG.cls] || []);
   return { cls:PG.cls, medium: pgSenior(PG.cls) ? PG.syb.medium : 'all', session: y + '-' + String((y+1)%100).padStart(2,'0'), books: subs.map(x=>({ id:'b_' + String(x).replace(/[^A-Za-z0-9]+/g,'_'), name:x, sub:x })), terms:{ t1:{}, t2:{}, ta:{} } };
 }
-async function pgSylLoad(){
+async function pgSbLoad(){
   if(!pgOK() || !PG.cls) return;
-  const S = PG.syb, key = pgSylKey();
+  const S = PG.syb, key = pgSbKey();
   S.key = key; S.loaded = false; S.dirty = false; S.edits = {};
-  S.doc = pgSylNew(); S.doc.terms = { t1:{}, t2:{}, ta:{} };      // empty editor is shown immediately
+  S.doc = pgSbNew(); S.doc.terms = { t1:{}, t2:{}, ta:{} };      // empty editor is shown immediately
   let remote = null, failed = false;
   try{
     const d = await fsDb.collection(PG_COLLECTION).doc(key).get();
-    if(d.exists) remote = Object.assign(pgSylNew(), d.data());
+    if(d.exists) remote = Object.assign(pgSbNew(), d.data());
   }catch(e){ console.error(e); failed = true; }
   if(S.key !== key) return;                               // class / medium changed meanwhile
   if(remote){
@@ -4741,33 +4741,33 @@ async function pgSylLoad(){
   }
   S.loaded = true;
   if(failed) S.msg = '<div class="msg-err">Could not reach the saved syllabus (check the internet / Firestore rules for paper_bank). You can write, but it may not save until the connection works.</div>';
-  if(S.dirty && !failed) await pgSylSave();
+  if(S.dirty && !failed) await pgSbSave();
   pgRenderBody();
 }
-function pgSylSaveSoon(){ PG.syb.dirty = true; if(!PG.syb.loaded) return; clearTimeout(PG.syb.timer); PG.syb.timer = setTimeout(pgSylSave, 500); }
-async function pgSylSave(){
+function pgSbSaveSoon(){ PG.syb.dirty = true; if(!PG.syb.loaded) return; clearTimeout(PG.syb.timer); PG.syb.timer = setTimeout(pgSbSave, 500); }
+async function pgSbSave(){
   if(!pgOK() || !PG.syb.doc || !PG.syb.loaded) return false;
-  try{ await fsDb.collection(PG_COLLECTION).doc(PG.syb.key).set(PG.syb.doc); const el = document.getElementById('pgSylStat'); if(el) el.textContent = 'Saved \u2713'; return true; }
+  try{ await fsDb.collection(PG_COLLECTION).doc(PG.syb.key).set(PG.syb.doc); const el = document.getElementById('pgSbStat'); if(el) el.textContent = 'Saved \u2713'; return true; }
   catch(e){ console.error(e); alert('Save failed: ' + (e.message || 'permission denied')); return false; }
 }
-function pgSylSetTerm(t){ PG.syb.term = t; PG.syb.msg = ''; pgRenderBody(); }
-function pgSylSetMedium(m){ PG.syb.medium = m; PG.syb.doc = null; PG.syb.msg = ''; pgRenderBody(); }
-function pgSylText(id, v){ const d = PG.syb.doc, t = PG.syb.term; d.terms[t] = d.terms[t] || {}; d.terms[t][id] = v; PG.syb.edits[t + '|' + id] = v; pgSylSaveSoon(); }
-function pgSylWait(){ if(PG.syb.loaded) return false; alert('Please wait a moment, the saved syllabus is still loading.'); return true; }
-function pgSylName(id, v){ if(pgSylWait()) return; const b = PG.syb.doc.books.find(x=>x.id===id); if(b){ b.name = v.trim(); pgSylSaveSoon(); } }
-function pgSylSession(v){ PG.syb.doc.session = v.trim(); pgSylSaveSoon(); }
-function pgSylDel(id){
-  if(pgSylWait()) return;
+function pgSbSetTerm(t){ PG.syb.term = t; PG.syb.msg = ''; pgRenderBody(); }
+function pgSbSetMedium(m){ PG.syb.medium = m; PG.syb.doc = null; PG.syb.msg = ''; pgRenderBody(); }
+function pgSbText(id, v){ const d = PG.syb.doc, t = PG.syb.term; d.terms[t] = d.terms[t] || {}; d.terms[t][id] = v; PG.syb.edits[t + '|' + id] = v; pgSbSaveSoon(); }
+function pgSbWait(){ if(PG.syb.loaded) return false; alert('Please wait a moment, the saved syllabus is still loading.'); return true; }
+function pgSbName(id, v){ if(pgSbWait()) return; const b = PG.syb.doc.books.find(x=>x.id===id); if(b){ b.name = v.trim(); pgSbSaveSoon(); } }
+function pgSbSession(v){ PG.syb.doc.session = v.trim(); pgSbSaveSoon(); }
+function pgSbDel(id){
+  if(pgSbWait()) return;
   const b = PG.syb.doc.books.find(x=>x.id===id); if(!b || !confirm('Remove the book "' + b.name + '" from this syllabus (all terms)?')) return;
-  PG.syb.doc.books = PG.syb.doc.books.filter(x=>x.id!==id); pgSylSaveSoon(); pgRenderBody();
+  PG.syb.doc.books = PG.syb.doc.books.filter(x=>x.id!==id); pgSbSaveSoon(); pgRenderBody();
 }
-function pgSylAdd(){
-  if(pgSylWait()) return;
-  const el = document.getElementById('pgSylNewBook'), v = el ? el.value.trim() : '';
+function pgSbAdd(){
+  if(pgSbWait()) return;
+  const el = document.getElementById('pgSbNewBook'), v = el ? el.value.trim() : '';
   if(!v){ alert('Type the book name first.'); return; }
-  PG.syb.doc.books.push({ id:uid(), name:v, sub:'' }); pgSylSaveSoon(); pgRenderBody();
+  PG.syb.doc.books.push({ id:uid(), name:v, sub:'' }); pgSbSaveSoon(); pgRenderBody();
 }
-async function pgSylFillChapters(){
+async function pgSbFillChapters(){
   const d = PG.syb.doc, t = PG.syb.term; let n = 0;
   PG.syb.msg = '<div class="msg-ok">Looking in your saved books and question banks&hellip;</div>'; pgRenderBody();
   for(const b of d.books){
@@ -4784,17 +4784,17 @@ async function pgSylFillChapters(){
     }catch(e){ console.error(e); }
   }
   PG.syb.msg = n ? `<div class="msg-ok">Chapter names filled for ${n} book(s). Delete the chapters that do not belong to this term.</div>` : '<div class="msg-err">No saved chapters were found for the empty books. Add questions with a chapter, or save the book in Smart Paper first.</div>';
-  await pgSylSave(); pgRenderBody();
+  await pgSbSave(); pgRenderBody();
 }
-async function pgSylAnnual(){
+async function pgSbAnnual(){
   const d = PG.syb.doc;
   if(Object.values(d.terms.ta || {}).some(v=>(v||'').trim()) && !confirm('Annual already has text for some books. Replace it with 1st Term + 2nd Term?')) return;
   d.terms.ta = {};
   d.books.forEach(b=>{ const j = [(d.terms.t1||{})[b.id], (d.terms.t2||{})[b.id]].map(x=>(x||'').trim()).filter(Boolean).join(', '); if(j) d.terms.ta[b.id] = j; });
   PG.syb.term = 'ta'; PG.syb.msg = '<div class="msg-ok">Annual syllabus = 1st Term + 2nd Term for every book. You can still edit it.</div>';
-  await pgSylSave(); pgRenderBody();
+  await pgSbSave(); pgRenderBody();
 }
-async function pgSylCopyOther(){
+async function pgSbCopyOther(){
   if(!pgOK()) return;
   const other = PG.syb.medium === 'en' ? 'ur' : 'en', key = 'syllabus__' + (PG.cls+'__'+other).replace(/[\/\s]+/g,'_');
   try{
@@ -4804,10 +4804,10 @@ async function pgSylCopyOther(){
     const o = od.data(), d = PG.syb.doc;
     d.books = JSON.parse(JSON.stringify(o.books || [])); d.terms = Object.assign({ t1:{}, t2:{}, ta:{} }, JSON.parse(JSON.stringify(o.terms || {})));
     PG.syb.msg = '<div class="msg-ok">Copied. Now translate / adjust the texts for this medium.</div>';
-    await pgSylSave(); pgRenderBody();
+    await pgSbSave(); pgRenderBody();
   }catch(e){ console.error(e); alert('Could not copy: ' + (e.message || '')); }
 }
-async function pgSylLoadCat(b){
+async function pgSbLoadCat(b){
   const out = [], add = (name, topics)=>{ name = (name||'').trim(); if(!name) return; let c = out.find(x=>x.name===name); if(!c){ c = { name, topics:[] }; out.push(c); } (topics||[]).forEach(t=>{ t = (t||'').trim(); if(t && !c.topics.includes(t)) c.topics.push(t); }); };
   try{
     const sd = await fsDb.collection(PG_COLLECTION).doc(pgSrcKeyFor(PG.cls, b.sub)).get();
@@ -4817,33 +4817,33 @@ async function pgSylLoadCat(b){
   }catch(e){ console.error(e); }
   PG.syb.cat[b.id] = out;
 }
-async function pgSylOpen(bid){
+async function pgSbOpen(bid){
   const S = PG.syb, b = S.doc.books.find(x=>x.id===bid); if(!b) return;
   S.open[bid] = !S.open[bid];
   pgRenderBody();
-  if(S.open[bid] && S.cat[bid] === undefined){ if(b.sub) await pgSylLoadCat(b); else S.cat[bid] = []; pgRenderBody(); }
+  if(S.open[bid] && S.cat[bid] === undefined){ if(b.sub) await pgSbLoadCat(b); else S.cat[bid] = []; pgRenderBody(); }
 }
-function pgSylPick(bid, ci, ti, on){
+function pgSbPick(bid, ci, ti, on){
   const pk = PG.syb.pick[bid] = PG.syb.pick[bid] || {}, k = ti < 0 ? String(ci) : ci + ':' + ti;
   if(on) pk[k] = true; else delete pk[k];
   pgRenderBody();
 }
-function pgSylExp(bid, ci){ const k = bid + '|' + ci; PG.syb.exp[k] = !PG.syb.exp[k]; pgRenderBody(); }
-function pgSylPickAll(bid){ const cat = PG.syb.cat[bid] || [], pk = PG.syb.pick[bid] = {}; cat.forEach((c,ci)=>{ pk[String(ci)] = true; }); pgRenderBody(); }
-function pgSylPickItems(bid){
+function pgSbExp(bid, ci){ const k = bid + '|' + ci; PG.syb.exp[k] = !PG.syb.exp[k]; pgRenderBody(); }
+function pgSbPickAll(bid){ const cat = PG.syb.cat[bid] || [], pk = PG.syb.pick[bid] = {}; cat.forEach((c,ci)=>{ pk[String(ci)] = true; }); pgRenderBody(); }
+function pgSbPickItems(bid){
   const cat = PG.syb.cat[bid] || [], pk = PG.syb.pick[bid] || {};
   return cat.map((c,ci)=>{ if(pk[ci]) return c.name; const ts = c.topics.filter((t,ti)=>pk[ci+':'+ti]); return ts.length ? c.name + ' (' + ts.join(', ') + ')' : ''; }).filter(Boolean);
 }
-function pgSylApply(bid, mode){
-  let items = pgSylPickItems(bid);
+function pgSbApply(bid, mode){
+  let items = pgSbPickItems(bid);
   if(!items.length){ alert('Tick at least one chapter or topic first.'); return; }
   const d = PG.syb.doc, t = PG.syb.term; d.terms[t] = d.terms[t] || {};
   const cur = (d.terms[t][bid] || '').trim();
   if(mode==='add' && cur) items = items.filter(x=>!cur.includes(x));
   d.terms[t][bid] = (mode==='add' && cur) ? [cur].concat(items).join(', ') : items.join(', ');
-  PG.syb.pick[bid] = {}; pgSylSaveSoon(); pgRenderBody();
+  PG.syb.pick[bid] = {}; pgSbSaveSoon(); pgRenderBody();
 }
-function pgSylPickerHTML(b){
+function pgSbPickerHTML(b){
   const S = PG.syb, cat = S.cat[b.id];
   if(!S.open[b.id]) return '';
   if(cat === undefined) return '<div style="margin-top:8px;color:var(--muted);">Loading chapters&hellip;</div>';
@@ -4852,21 +4852,21 @@ function pgSylPickerHTML(b){
   return `<div style="margin-top:8px;border-top:1px dashed var(--line);padding-top:8px;">
     <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">Tick a chapter for the <b>whole chapter</b>. Click the chapter name to open its topics and tick only some of them.</div>
     ${cat.map((c,ci)=>{ const ex = S.exp[b.id+'|'+ci], nT = c.topics.filter((t,ti)=>pk[ci+':'+ti]).length;
-      return `<div style="padding:2px 0;"><label style="display:inline-flex;gap:6px;align-items:center;font-weight:600;cursor:pointer;"><input type="checkbox" style="width:auto;" ${pk[ci]?'checked':''} onchange="pgSylPick('${b.id}',${ci},-1,this.checked)"></label>
-        <span dir="auto" style="cursor:${c.topics.length?'pointer':'default'};font-weight:600;" onclick="${c.topics.length?`pgSylExp('${b.id}',${ci})`:''}">${esc(c.name)}</span>
+      return `<div style="padding:2px 0;"><label style="display:inline-flex;gap:6px;align-items:center;font-weight:600;cursor:pointer;"><input type="checkbox" style="width:auto;" ${pk[ci]?'checked':''} onchange="pgSbPick('${b.id}',${ci},-1,this.checked)"></label>
+        <span dir="auto" style="cursor:${c.topics.length?'pointer':'default'};font-weight:600;" onclick="${c.topics.length?`pgSbExp('${b.id}',${ci})`:''}">${esc(c.name)}</span>
         ${c.topics.length ? `<small style="color:var(--muted);"> ${ex?'&#9662;':'&#9656;'} ${c.topics.length} topic${c.topics.length>1?'s':''}${nT&&!pk[ci]?' &middot; '+nT+' ticked':''}</small>` : ''}
-        ${ex ? `<div style="margin:2px 0 4px 26px;">${c.topics.map((t,ti)=>`<label style="display:flex;gap:6px;align-items:center;font-weight:400;"><input type="checkbox" style="width:auto;" ${pk[ci]||pk[ci+':'+ti]?'checked':''} ${pk[ci]?'disabled':''} onchange="pgSylPick('${b.id}',${ci},${ti},this.checked)"> <span dir="auto">${esc(t)}</span></label>`).join('')}</div>` : ''}</div>`; }).join('')}
+        ${ex ? `<div style="margin:2px 0 4px 26px;">${c.topics.map((t,ti)=>`<label style="display:flex;gap:6px;align-items:center;font-weight:400;"><input type="checkbox" style="width:auto;" ${pk[ci]||pk[ci+':'+ti]?'checked':''} ${pk[ci]?'disabled':''} onchange="pgSbPick('${b.id}',${ci},${ti},this.checked)"> <span dir="auto">${esc(t)}</span></label>`).join('')}</div>` : ''}</div>`; }).join('')}
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">
-      <button type="button" class="tag-btn ghost" style="padding:3px 10px;font-size:12px;" onclick="pgSylPickAll('${b.id}')">Tick all chapters</button>
-      <button type="button" class="tag-btn" style="padding:3px 10px;font-size:12px;" onclick="pgSylApply('${b.id}','add')">Add ticked to syllabus</button>
-      <button type="button" class="tag-btn" style="padding:3px 10px;font-size:12px;" onclick="pgSylApply('${b.id}','replace')">Replace syllabus with ticked</button>
+      <button type="button" class="tag-btn ghost" style="padding:3px 10px;font-size:12px;" onclick="pgSbPickAll('${b.id}')">Tick all chapters</button>
+      <button type="button" class="tag-btn" style="padding:3px 10px;font-size:12px;" onclick="pgSbApply('${b.id}','add')">Add ticked to syllabus</button>
+      <button type="button" class="tag-btn" style="padding:3px 10px;font-size:12px;" onclick="pgSbApply('${b.id}','replace')">Replace syllabus with ticked</button>
     </div></div>`;
 }
-function pgSylHTML(){
+function pgSbHTML(){
   const S = PG.syb;
   if(!PG.cls) return '<div class="empty">Select a Class above first.</div>';
   const d = S.doc;
-  if(!d || S.key !== pgSylKey()) return '<div class="empty">Opening&hellip;</div>';
+  if(!d || S.key !== pgSbKey()) return '<div class="empty">Opening&hellip;</div>';
   const sen = pgSenior(PG.cls), ur = sen && S.medium === 'ur', T = S.term, U = 'font-family:' + PG_UR_FONT + ';';
   const inp = 'width:100%;padding:7px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:14px;';
   const filled = d.books.filter(b=>((d.terms[T] || {})[b.id] || '').trim()).length;
@@ -4874,29 +4874,29 @@ function pgSylHTML(){
     ${S.msg}
     ${S.loaded ? '' : '<p class="note-inline" style="margin:0 0 8px;">Your earlier saved syllabus is being fetched in the background &mdash; you can start typing already.</p>'}
     <p class="note-inline" style="margin:0 0 10px;">Write the syllabus <b>yourself in the box in front of each book</b>, for the term chosen above. Everything is saved as you type, and you can come back and edit or delete any text later. Print puts <b>all books on one page</b> (books left empty are skipped).</p>
-    ${sen ? `<div style="margin:0 0 10px;"><b>Medium:</b> ${[['en','English Medium'],['ur','Urdu Medium (\u0627\u0631\u062f\u0648)']].map(x=>`<button type="button" class="tag-btn ${S.medium===x[0]?'':'ghost'}" style="margin:0 6px;" onclick="pgSylSetMedium('${x[0]}')">${x[1]}</button>`).join('')} <button type="button" class="tag-btn ghost" style="padding:3px 10px;font-size:12px;" onclick="pgSylCopyOther()">Copy from ${ur?'English':'Urdu'} medium</button></div>` : ''}
+    ${sen ? `<div style="margin:0 0 10px;"><b>Medium:</b> ${[['en','English Medium'],['ur','Urdu Medium (\u0627\u0631\u062f\u0648)']].map(x=>`<button type="button" class="tag-btn ${S.medium===x[0]?'':'ghost'}" style="margin:0 6px;" onclick="pgSbSetMedium('${x[0]}')">${x[1]}</button>`).join('')} <button type="button" class="tag-btn ghost" style="padding:3px 10px;font-size:12px;" onclick="pgSbCopyOther()">Copy from ${ur?'English':'Urdu'} medium</button></div>` : ''}
     <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 10px;">
-      ${PG_TERMS.map(x=>`<button type="button" class="tag-btn ${T===x[0]?'':'ghost'}" onclick="pgSylSetTerm('${x[0]}')">${x[1]}</button>`).join('')}
-      <span style="margin-left:auto;display:flex;gap:6px;align-items:center;"><label style="font-weight:600;">Session</label><input value="${esc(d.session||'')}" style="width:100px;padding:6px;border:1px solid var(--line);border-radius:6px;" onchange="pgSylSession(this.value)"></span>
+      ${PG_TERMS.map(x=>`<button type="button" class="tag-btn ${T===x[0]?'':'ghost'}" onclick="pgSbSetTerm('${x[0]}')">${x[1]}</button>`).join('')}
+      <span style="margin-left:auto;display:flex;gap:6px;align-items:center;"><label style="font-weight:600;">Session</label><input value="${esc(d.session||'')}" style="width:100px;padding:6px;border:1px solid var(--line);border-radius:6px;" onchange="pgSbSession(this.value)"></span>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px;">
-      ${T==='ta' ? '' : ''}<button type="button" class="tag-btn" onclick="pgSylAnnual()">Annual = 1st + 2nd Term</button>
+      ${T==='ta' ? '' : ''}<button type="button" class="tag-btn" onclick="pgSbAnnual()">Annual = 1st + 2nd Term</button>
     </div>
     ${d.books.map(b=>`<div style="border:1px solid var(--line);border-radius:8px;background:#fff;padding:8px 10px;margin-bottom:8px;">
       <div style="display:grid;grid-template-columns:minmax(120px,22%) 1fr auto;gap:10px;align-items:start;">
-        <div><input dir="auto" value="${esc(b.name)}" style="${inp}font-weight:700;${ur?U:''}" onchange="pgSylName('${b.id}',this.value)"></div>
-        <textarea rows="3" dir="auto" placeholder="${ur?'\u0627\u0633 \u06a9\u062a\u0627\u0628 \u06a9\u0627 \u0646\u0635\u0627\u0628 \u0644\u06a9\u06be\u06cc\u06ba':'Write the syllabus of this book here'}" style="${inp}${ur?U:''}" oninput="pgSylText('${b.id}',this.value)">${esc((d.terms[T]||{})[b.id]||'')}</textarea>
-        <button type="button" class="tag-btn ghost" title="Remove this book" style="padding:3px 9px;" onclick="pgSylDel('${b.id}')">&times;</button>
+        <div><input dir="auto" value="${esc(b.name)}" style="${inp}font-weight:700;${ur?U:''}" onchange="pgSbName('${b.id}',this.value)"></div>
+        <textarea rows="3" dir="auto" placeholder="${ur?'\u0627\u0633 \u06a9\u062a\u0627\u0628 \u06a9\u0627 \u0646\u0635\u0627\u0628 \u0644\u06a9\u06be\u06cc\u06ba':'Write the syllabus of this book here'}" style="${inp}${ur?U:''}" oninput="pgSbText('${b.id}',this.value)">${esc((d.terms[T]||{})[b.id]||'')}</textarea>
+        <button type="button" class="tag-btn ghost" title="Remove this book" style="padding:3px 9px;" onclick="pgSbDel('${b.id}')">&times;</button>
       </div>
     </div>`).join('')}
-    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0;"><input id="pgSylNewBook" dir="auto" placeholder="Add another book (e.g. Islamiyat Lazmi)" style="${inp}max-width:320px;"><button type="button" class="tag-btn" onclick="pgSylAdd()">+ Add book</button></div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0;"><input id="pgSbNewBook" dir="auto" placeholder="Add another book (e.g. Islamiyat Lazmi)" style="${inp}max-width:320px;"><button type="button" class="tag-btn" onclick="pgSbAdd()">+ Add book</button></div>
     <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
-      <button type="button" class="btn-gold" onclick="pgSylPrint('${T}')">Print ${PG_TERMS.find(x=>x[0]===T)[1]} syllabus (${filled} book${filled===1?'':'s'})</button>
-      <button type="button" class="tag-btn" onclick="pgSylPrint('all')">Print all three terms</button>
-      <span id="pgSylStat" style="font-size:12px;color:var(--muted);"></span>
+      <button type="button" class="btn-gold" onclick="pgSbPrint('${T}')">Print ${PG_TERMS.find(x=>x[0]===T)[1]} syllabus (${filled} book${filled===1?'':'s'})</button>
+      <button type="button" class="tag-btn" onclick="pgSbPrint('all')">Print all three terms</button>
+      <span id="pgSbStat" style="font-size:12px;color:var(--muted);"></span>
     </div>`;
 }
-function pgSylPageHTML(tk){
+function pgSbPageHTML(tk){
   const d = PG.syb.doc, sen = pgSenior(PG.cls), ur = sen && PG.syb.medium === 'ur', T = PG_TERMS.find(x=>x[0]===tk);
   const rows = d.books.map(b=>({ name:b.name, text:((d.terms[tk] || {})[b.id] || '').trim() })).filter(r=>r.text);
   if(!rows.length) return '';
@@ -4918,10 +4918,10 @@ function pgSylPageHTML(tk){
     </table>
   </div>`;
 }
-function pgSylPrint(which){
+function pgSbPrint(which){
   if(!PG.syb.doc) return;
   const keys = which === 'all' ? PG_TERMS.map(x=>x[0]) : [which];
-  const pages = keys.map(k=>pgSylPageHTML(k)).filter(Boolean);
+  const pages = keys.map(k=>pgSbPageHTML(k)).filter(Boolean);
   if(!pages.length){ alert('Write the syllabus of at least one book first.'); return; }
   printHTML(pages.map((p,i)=>i<pages.length-1 ? p.replace('<div class="pg-stu-sheet" style="', '<div class="pg-stu-sheet" style="break-after:page;page-break-after:always;') : p).join(''));
 }
@@ -4930,8 +4930,8 @@ function pgRenderBody(){
   if(!b) return;
   if(PG.tab==='saved'){ b.innerHTML = pgSavedHTML(); return; }
   if(PG.tab==='syllabus'){
-    try{ b.innerHTML = pgSylHTML(); }catch(e){ console.error(e); b.innerHTML = '<div class="msg-err">The syllabus page could not be shown: ' + esc(e.message || e) + '</div>'; }
-    if(PG.cls && (!PG.syb.doc || PG.syb.key!==pgSylKey())){ pgSylLoad(); try{ b.innerHTML = pgSylHTML(); }catch(e){ console.error(e); } }
+    try{ b.innerHTML = pgSbHTML(); }catch(e){ console.error(e); b.innerHTML = '<div class="msg-err">The syllabus page could not be shown: ' + esc(e.message || e) + '</div>'; }
+    if(PG.cls && (!PG.syb.doc || PG.syb.key!==pgSbKey())){ pgSbLoad(); try{ b.innerHTML = pgSbHTML(); }catch(e){ console.error(e); } }
     return;
   }
   if(PG.tab==='smart' && PG.cls && !PG.subject){ b.innerHTML = pgLibraryHTML(); pgLoadLibrary(); return; }
