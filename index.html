@@ -4717,7 +4717,7 @@ function pgNeedScope(){
 }
 /* ---------------- SYLLABUS: term-wise, book-wise, one printed page ---------------- */
 const PG_TERMS = [['t1','1st Term','\u067e\u06c1\u0644\u0627 \u0679\u0631\u0645'],['t2','2nd Term','\u062f\u0648\u0633\u0631\u0627 \u0679\u0631\u0645'],['ta','Annual','\u0633\u0627\u0644\u0627\u0646\u06c1']];
-PG.syb = { term:'t1', medium:'en', doc:null, key:'', msg:'', timer:null, dirty:false, loaded:false, edits:{}, cat:{}, open:{}, pick:{}, exp:{}, store:{ sessions:{} }, mode:null, savedAt:'', fmt:{ text:{}, names:{}, title:{}, head:{}, books:{}, bnames:{} }, fmtT:'text', sel:{}, fmtTouched:false };
+PG.syb = { term:'t1', medium:'en', doc:null, key:'', msg:'', timer:null, dirty:false, loaded:false, edits:{}, cat:{}, open:{}, pick:{}, exp:{}, store:{ sessions:{} }, mode:null, savedAt:'', fmt:{ text:{}, names:{}, title:{}, head:{}, books:{}, bnames:{} }, fmtT:'text', sel:{}, fmtTouched:false, mv:null, undo:null };
 function pgSbKey(){ const m = pgSenior(PG.cls) ? PG.syb.medium : 'all'; return 'syllabus__' + (PG.cls+'__'+m).replace(/[\/\s]+/g,'_'); }
 function pgSbNew(){
   const y = new Date().getFullYear(), subs = (DB.classSubjects[PG.cls] || []);
@@ -4857,6 +4857,60 @@ async function pgSbSaveNow(){
   S.msg = '<div class="msg-ok">Saved &#10003; ' + esc(S.savedAt) + ' &mdash; this syllabus is stored for session ' + esc(S.doc.session) + ' and stays here for next time. Press Edit to change it.</div>';
   S.mode = pgSbHasText() ? 'view' : 'edit'; pgRenderBody();
 }
+/* ---------- move / copy a term's syllabus to another term ---------- */
+function pgSbTermName(k){ const x = PG_TERMS.find(t=>t[0] === k); return x ? x[1] : k; }
+function pgSbMvOpen(){
+  const S = PG.syb; if(pgSbWait()) return;
+  const d = S.doc, from = S.term, to = from === 't1' ? 't2' : (from === 't2' ? 'ta' : 't2'), books = {};
+  d.books.forEach(b=>{ if(((d.terms[from] || {})[b.id] || '').trim()) books[b.id] = true; });
+  S.mv = { to, mode:'move', conf:'append', books }; S.msg = ''; pgRenderBody();
+}
+function pgSbMvCancel(){ PG.syb.mv = null; pgRenderBody(); }
+function pgSbMvSet(k, v){ PG.syb.mv[k] = v; pgRenderBody(); }
+function pgSbMvBook(id, on){ if(on) PG.syb.mv.books[id] = true; else delete PG.syb.mv.books[id]; pgRenderBody(); }
+function pgSbMvAll(on){ const S = PG.syb, d = S.doc; S.mv.books = {}; if(on) d.books.forEach(b=>{ if(((d.terms[S.term] || {})[b.id] || '').trim()) S.mv.books[b.id] = true; }); pgRenderBody(); }
+async function pgSbMvApply(){
+  const S = PG.syb, d = S.doc, mv = S.mv; if(!mv || pgSbWait()) return;
+  const from = S.term, to = mv.to;
+  if(from === to){ alert('Choose a different term to move to.'); return; }
+  const ids = d.books.filter(b=>mv.books[b.id] && ((d.terms[from] || {})[b.id] || '').trim()).map(b=>b.id);
+  if(!ids.length){ alert('Tick at least one book that has syllabus text in ' + pgSbTermName(from) + '.'); return; }
+  S.undo = { from, to, terms: JSON.parse(JSON.stringify(d.terms)) };
+  d.terms[to] = d.terms[to] || {}; d.terms[from] = d.terms[from] || {};
+  let done = 0, skipped = 0;
+  ids.forEach(id=>{
+    const src = (d.terms[from][id] || '').trim(), dst = (d.terms[to][id] || '').trim();
+    if(!dst) d.terms[to][id] = src;
+    else if(mv.conf === 'replace') d.terms[to][id] = src;
+    else if(mv.conf === 'skip'){ skipped++; return; }
+    else if(!dst.includes(src)) d.terms[to][id] = dst + ', ' + src;
+    done++;
+    if(mv.mode === 'move') delete d.terms[from][id];
+  });
+  S.term = to; S.mode = 'view'; S.mv = null; S.edits = {};
+  S.msg = '<div class="msg-ok">' + (mv.mode === 'move' ? 'Moved' : 'Copied') + ' ' + done + ' book(s) from ' + esc(pgSbTermName(from)) + ' to ' + esc(pgSbTermName(to)) + (skipped ? ' (' + skipped + ' skipped because ' + esc(pgSbTermName(to)) + ' already had text)' : '') + '. <button type="button" class="tag-btn ghost" style="padding:2px 9px;font-size:12px;" onclick="pgSbMvUndo()">Undo</button></div>';
+  await pgSbSave(); pgRenderBody();
+}
+async function pgSbMvUndo(){
+  const S = PG.syb, u = S.undo; if(!u || pgSbWait()) return;
+  S.doc.terms = Object.assign({ t1:{}, t2:{}, ta:{} }, u.terms); S.term = u.from; S.mode = 'view'; S.undo = null;
+  S.msg = '<div class="msg-ok">Undone &mdash; the syllabus is back as it was in ' + esc(pgSbTermName(u.from)) + '.</div>';
+  await pgSbSave(); pgRenderBody();
+}
+function pgSbMvHTML(d){
+  const S = PG.syb, mv = S.mv; if(!mv) return '';
+  const from = S.term, withText = d.books.filter(b=>((d.terms[from] || {})[b.id] || '').trim());
+  const rad = (name, val, cur, label) => `<label style="display:inline-flex;gap:5px;align-items:center;margin-right:14px;font-weight:600;"><input type="radio" name="${name}" style="width:auto;" ${cur===val?'checked':''} onchange="pgSbMvSet('${name}','${val}')"> ${label}</label>`;
+  return `<div style="border:2px solid #2a6df4;border-radius:8px;background:#f3f7ff;padding:10px 12px;margin:0 0 12px;">
+    <b>Move / copy syllabus &mdash; from ${esc(pgSbTermName(from))}</b>
+    <div style="margin:8px 0;"><b>To:</b> ${PG_TERMS.filter(x=>x[0] !== from).map(x=>rad('to', x[0], mv.to, esc(x[1]))).join('')}</div>
+    <div style="margin:8px 0;"><b>Action:</b> ${rad('mode','move',mv.mode,'Move (remove it from ' + esc(pgSbTermName(from)) + ')')}${rad('mode','copy',mv.mode,'Copy (keep it in ' + esc(pgSbTermName(from)) + ' too)')}</div>
+    <div style="margin:8px 0;"><b>Books:</b> <button type="button" class="tag-btn ghost" style="padding:2px 9px;font-size:12px;" onclick="pgSbMvAll(true)">Tick all</button> <button type="button" class="tag-btn ghost" style="padding:2px 9px;font-size:12px;" onclick="pgSbMvAll(false)">Untick all</button>
+      ${withText.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:6px;">${withText.map(b=>`<label style="display:inline-flex;gap:5px;align-items:center;font-weight:400;"><input type="checkbox" style="width:auto;" ${mv.books[b.id]?'checked':''} onchange="pgSbMvBook('${b.id}',this.checked)"> <span dir="auto">${esc(b.name)}</span></label>`).join('')}</div>` : `<div style="color:var(--muted);margin-top:6px;">No book has syllabus text in ${esc(pgSbTermName(from))} yet.</div>`}</div>
+    <div style="margin:8px 0;"><b>If ${esc(pgSbTermName(mv.to))} already has text for a book:</b><br>${rad('conf','append',mv.conf,'Add after the existing text')}${rad('conf','replace',mv.conf,'Replace it')}${rad('conf','skip',mv.conf,'Keep it, skip that book')}</div>
+    <div style="display:flex;gap:8px;margin-top:10px;"><button type="button" class="btn-gold" onclick="pgSbMvApply()">${mv.mode==='move'?'Move':'Copy'} to ${esc(pgSbTermName(mv.to))}</button><button type="button" class="tag-btn ghost" onclick="pgSbMvCancel()">Cancel</button></div>
+  </div>`;
+}
 function pgSbEdit(){ PG.syb.mode = 'edit'; PG.syb.msg = ''; pgRenderBody(); }
 function pgSbSetSession(name){
   const S = PG.syb; if(pgSbWait()) return;
@@ -4879,7 +4933,7 @@ async function pgSbNewSession(){
   S.mode = 'edit'; S.edits = {}; S.msg = '<div class="msg-ok">New session ' + esc(name) + ' started' + (copy ? ' with a copy of ' + esc(cur) : '') + '. Edit it and press Save.</div>';
   await pgSbSave(); pgRenderBody();
 }
-function pgSbSetTerm(t){ PG.syb.term = t; PG.syb.msg = ''; PG.syb.mode = null; pgRenderBody(); }
+function pgSbSetTerm(t){ PG.syb.term = t; PG.syb.msg = ''; PG.syb.mode = null; PG.syb.mv = null; pgRenderBody(); }
 function pgSbSetMedium(m){ PG.syb.medium = m; PG.syb.doc = null; PG.syb.msg = ''; PG.syb.mode = null; pgRenderBody(); }
 function pgSbText(id, v){ const d = PG.syb.doc, t = PG.syb.term; d.terms[t] = d.terms[t] || {}; d.terms[t][id] = v; PG.syb.edits[t + '|' + id] = v; pgSbSaveSoon(); }
 function pgSbWait(){ if(PG.syb.loaded) return false; alert('Please wait a moment, the saved syllabus is still loading.'); return true; }
@@ -5014,7 +5068,8 @@ function pgSbHTML(){
         <button type="button" class="tag-btn ghost" style="padding:3px 10px;font-size:12px;" onclick="pgSbNewSession()">+ New session</button></span>
     </div>
     <div id="pgSbTb">${pgSbToolbarHTML(d)}</div>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px;">${mainBtn}${view ? '' : `<button type="button" class="tag-btn" onclick="pgSbAnnual()">Annual = 1st + 2nd Term</button>`}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px;">${mainBtn}${view ? '' : `<button type="button" class="tag-btn" onclick="pgSbAnnual()">Annual = 1st + 2nd Term</button>`}<button type="button" class="tag-btn" onclick="pgSbMvOpen()">&#8644; Move / copy to another term</button></div>
+    ${pgSbMvHTML(d)}
     ${d.books.map(b=>{ const txt = (d.terms[T] || {})[b.id] || '';
       if(view) return `<div style="border:1px solid var(--line);border-radius:8px;background:#fff;padding:8px 10px;margin-bottom:8px;display:grid;grid-template-columns:minmax(120px,22%) 1fr;gap:10px;"><div style="display:flex;gap:4px;align-items:flex-start;">${chk('n:'+b.id)}<div dir="auto" data-sbt="n:${b.id}" onmousedown="pgSbPickT('n:${b.id}',event)" style="cursor:pointer;flex:1;${nameCss(b.id)}${sel('n:'+b.id)}">${esc(b.name)}</div></div><div><label style="font-size:11px;color:var(--muted);display:block;">${chk('b:'+b.id)} select</label><div dir="auto" data-sbt="b:${b.id}" onmousedown="pgSbPickT('b:${b.id}',event)" style="cursor:pointer;white-space:pre-wrap;${boxCss(b.id)}${txt.trim()?'':'color:var(--muted);'}${sel('b:'+b.id)}">${txt.trim() ? esc(txt) : '&mdash; not written &mdash;'}</div></div></div>`;
       return `<div style="border:1px solid var(--line);border-radius:8px;background:#fff;padding:8px 10px;margin-bottom:8px;">
