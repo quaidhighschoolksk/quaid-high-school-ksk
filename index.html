@@ -515,9 +515,10 @@
 
   <section class="tab" id="tab-datesheet">
     <div class="section-title"><span class="num">05</span><h2>Exam Date Sheet</h2></div>
-    <p class="section-sub">Filter by session (year) and class to see the relevant exam dates and timings.</p>
+    <p class="section-sub">Choose the session (year), the class and the term to see the relevant exam dates and timings.</p>
     <div class="filter-chips" id="dsSessionChips"></div>
     <div class="filter-chips" id="dsFilterChips"></div>
+    <div class="filter-chips" id="dsTermChips"></div>
     <div id="dsTableWrap"></div>
   </section>
 
@@ -889,7 +890,7 @@ async function downloadElementAsPDF(elementId, filename, statusElId){
 let DB = { notifications:[], students:[], admissions:[], datesheet:[], results:[], enrollments:[], classSubjects:{}, aboutUs:[], complaints:[], studentAccounts:{}, academicCalendar:[], notes:[], pairingSchemes:[], attendance:[], inoutDays:{}, feeRecords:[], diary:[] };
 let calSessionFilter = 'All';
 let isAdmin = false;
-let dsClassFilter = 'All';
+let dsClassFilter = '';
 let notesClassFilter = 'All';
 let notesSubjectFilter = 'All';
 let notesFileDraft = null; // { url, name, type } for a newly uploaded/attached file, pending save
@@ -1323,31 +1324,100 @@ function lookupResult(){
 }
 
 /* ---------------- DATE SHEET ---------------- */
+const DS_TERMS = ['1st Term','2nd Term','Annual'];
+let dsTermFilter = '', dsEdit = null, dsFlash = '';
+function dsScope(){
+  const classes = CLASS_LIST.filter(c=>DB.datesheet.some(d=>d.className===c));
+  if(!classes.includes(dsClassFilter)) dsClassFilter = classes[0] || '';
+  const inScope = DB.datesheet.filter(d=> d.className===dsClassFilter && (dsSessionFilter==='All' || d.session===dsSessionFilter));
+  const present = DS_TERMS.filter(t=>inScope.some(d=>d.term===t));
+  Array.from(new Set(inScope.map(d=>d.term).filter(t=>t && !DS_TERMS.includes(t)))).forEach(t=>present.push(t));
+  if(inScope.some(d=>!d.term)) present.push('');
+  const showTerms = present.some(t=>t !== '');
+  if(showTerms && !present.includes(dsTermFilter)) dsTermFilter = present[0];
+  if(!showTerms) dsTermFilter = '';
+  const rows = inScope.filter(d=> !showTerms || (d.term || '') === dsTermFilter).sort((a,b)=> new Date(a.date)-new Date(b.date));
+  return { classes, present, showTerms, rows };
+}
 function renderDateSheet(){
+  if(dsEdit){ renderDateSheetEdit(); return; }
   const sessions = ['All', ...Array.from(new Set(DB.datesheet.map(d=>d.session).filter(Boolean))).sort().reverse()];
   document.getElementById('dsSessionChips').innerHTML = sessions.map(s=>
     `<button class="chip ${s===dsSessionFilter?'active':''}" onclick="setDsSessionFilter('${esc(s)}')">${s==='All'?'All Sessions':esc(s)}</button>`).join('');
-
-  const classes = ['All', ...CLASS_LIST.filter(c=>DB.datesheet.some(d=>d.className===c))];
-  document.getElementById('dsFilterChips').innerHTML = classes.map(c=>
+  const sc = dsScope();
+  document.getElementById('dsFilterChips').innerHTML = sc.classes.map(c=>
     `<button class="chip ${c===dsClassFilter?'active':''}" onclick="setDsFilter('${esc(c)}')">${esc(c)}</button>`).join('');
-
-  const rows = DB.datesheet
-    .filter(d=> (dsClassFilter==='All' || d.className===dsClassFilter) && (dsSessionFilter==='All' || d.session===dsSessionFilter))
-    .sort((a,b)=> new Date(a.date)-new Date(b.date));
-  const wrap = document.getElementById('dsTableWrap');
-  if(rows.length===0){ wrap.innerHTML = schoolBrandHTML('Exam Date Sheet') + '<div class="empty">No date sheet entries yet.</div>'; return; }
-  wrap.innerHTML = `<div id="dsPrintable">${schoolBrandHTML('Exam Date Sheet')}<table>
+  document.getElementById('dsTermChips').innerHTML = sc.showTerms ? sc.present.map(t=>
+    `<button class="chip ${t===dsTermFilter?'active':''}" onclick="setDsTermFilter(this.dataset.t)" data-t="${esc(t)}">${esc(t || 'Term not set')}</button>`).join('') : '';
+  const rows = sc.rows, wrap = document.getElementById('dsTableWrap'), title = 'Exam Date Sheet' + (dsTermFilter ? ' \u2014 ' + dsTermFilter : '');
+  const flash = dsFlash ? `<div class="msg-ok" style="margin-bottom:10px;">${dsFlash}</div>` : ''; dsFlash = '';
+  if(rows.length===0){ wrap.innerHTML = flash + schoolBrandHTML('Exam Date Sheet') + '<div class="empty">No date sheet entries yet.</div>'; return; }
+  wrap.innerHTML = `${flash}<div id="dsPrintable">${schoolBrandHTML(title)}<table>
     <tr><th class="mono">Session</th><th>Class</th><th>Subject</th><th class="mono">Date</th><th class="mono">Reporting Time</th><th class="mono">Timings</th></tr>
     ${rows.map(d=>`<tr><td class="mono">${esc(d.session||'-')}</td><td>${esc(d.className)}</td><td>${esc(d.subject)}</td><td class="mono">${fmtDate(d.date)}</td><td class="mono">${esc(d.arrivalTime||'-')}</td><td class="mono">${esc(d.time||'-')}${d.endTime?' to '+esc(d.endTime):''}</td></tr>`).join('')}
   </table></div>
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px;">
+    ${isAdmin ? '<button class="btn-gold" onclick="dsStartEdit()">&#9998; Edit this date sheet</button>' : ''}
     <button class="tag-btn ghost" onclick="printHTML(document.getElementById('dsPrintable').outerHTML)">Print Date Sheet</button>
     <button class="tag-btn ghost" onclick="downloadElementAsPDF('dsPrintable','Date-Sheet','dsDownloadStatus')">Download Date Sheet (PDF)</button>
   </div>
   <div id="dsDownloadStatus" style="margin-top:8px;"></div>`;
 }
-
+function dsStartEdit(){
+  if(!isAdmin) return;
+  const sc = dsScope(), rows = sc.rows;
+  if(!rows.length){ alert('There is no date sheet to edit here yet.'); return; }
+  const sess = Array.from(new Set(rows.map(r=>r.session)));
+  if(sess.length > 1){ alert('This list mixes several sessions. Choose one session at the top (not "All Sessions") and then press Edit.'); return; }
+  dsEdit = { className:dsClassFilter, origIds:rows.map(r=>r.id), origSession:rows[0].session || '', origTerm:rows[0].term || '', session:rows[0].session || '', term:rows[0].term || '', keep:true,
+    rows:rows.map(r=>({ subject:r.subject || '', date:r.date || '', arrival:r.arrivalTime || '', start:r.time || '', end:r.endTime || '' })) };
+  renderDateSheet();
+}
+function renderDateSheetEdit(){
+  const E = dsEdit; if(!E) return;
+  ['dsSessionChips','dsFilterChips','dsTermChips'].forEach(id=>{ document.getElementById(id).innerHTML = ''; });
+  const inp = 'width:100%;padding:6px;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:13px;';
+  document.getElementById('dsTableWrap').innerHTML = `<div style="border:2px solid #2a6df4;border-radius:10px;background:#f3f7ff;padding:12px 14px;">
+    <h3 style="margin:0 0 4px;">Edit date sheet &mdash; Class ${esc(E.className)}</h3>
+    <p class="note-inline" style="margin:0 0 10px;">Change any subject, date or time, add or remove papers, and set the <b>Session (year)</b> and <b>Term</b> this date sheet belongs to.</p>
+    <div class="row-2" style="margin-bottom:8px;">
+      <div class="field"><label>Session / Year</label><input value="${esc(E.session)}" oninput="dsEdit.session=this.value"></div>
+      <div class="field"><label>Term</label><select onchange="dsEdit.term=this.value"><option value="" ${!E.term?'selected':''}>&mdash; not set &mdash;</option>${DS_TERMS.map(t=>`<option ${E.term===t?'selected':''}>${esc(t)}</option>`).join('')}${E.term && !DS_TERMS.includes(E.term) ? `<option selected>${esc(E.term)}</option>` : ''}</select></div>
+    </div>
+    <label style="display:flex;gap:8px;align-items:flex-start;font-weight:600;margin:0 0 10px;"><input type="checkbox" style="width:auto;margin-top:3px;" ${E.keep?'checked':''} onchange="dsEdit.keep=this.checked"> <span>Keep the old date sheet exactly as it was in the records <small style="font-weight:400;color:var(--muted);">(your changes are saved as a new date sheet &mdash; so change the Session or Term above). Untick to update the old one itself.</small></span></label>
+    <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
+      <tr><th style="text-align:left;">Subject</th><th>Date</th><th>Reporting time</th><th>Start</th><th>End</th><th></th></tr>
+      ${E.rows.map((r,i)=>`<tr>
+        <td><input style="${inp}" value="${esc(r.subject)}" oninput="dsEdit.rows[${i}].subject=this.value"></td>
+        <td><input type="date" style="${inp}" value="${esc(r.date)}" onchange="dsEdit.rows[${i}].date=this.value"></td>
+        <td><input style="${inp}" value="${esc(r.arrival)}" placeholder="8:00am" oninput="dsEdit.rows[${i}].arrival=this.value"></td>
+        <td><input style="${inp}" value="${esc(r.start)}" placeholder="9:00am" oninput="dsEdit.rows[${i}].start=this.value"></td>
+        <td><input style="${inp}" value="${esc(r.end)}" placeholder="optional" oninput="dsEdit.rows[${i}].end=this.value"></td>
+        <td><button type="button" class="tag-btn danger" style="padding:3px 9px;" title="Remove this paper" onclick="dsEditRemove(${i})">&times;</button></td></tr>`).join('')}
+    </table></div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
+      <button type="button" class="tag-btn" onclick="dsEditAdd()">+ Add paper</button>
+      <button type="button" class="btn-gold" onclick="dsEditSave()">&#10003; Save date sheet</button>
+      <button type="button" class="tag-btn ghost" onclick="dsEditCancel()">Cancel</button>
+    </div></div>`;
+}
+function dsEditAdd(){ dsEdit.rows.push({ subject:'', date:'', arrival:'', start:'', end:'' }); renderDateSheet(); }
+function dsEditRemove(i){ dsEdit.rows.splice(i, 1); renderDateSheet(); }
+function dsEditCancel(){ dsEdit = null; renderDateSheet(); }
+async function dsEditSave(){
+  const E = dsEdit; if(!E) return;
+  const session = (E.session || '').trim(), term = E.term || '';
+  if(!session){ alert('Please enter the Session / Year.'); return; }
+  const rows = E.rows.filter(r=>(r.subject || '').trim() && r.date);
+  if(!rows.length){ alert('Add at least one paper with a subject and a date.'); return; }
+  if(E.keep && session === E.origSession && term === E.origTerm){ alert('To keep the old date sheet as it was, change the Session / Year or the Term first, so this one is saved as a separate date sheet.\n\nOr untick "Keep the old date sheet" to update the old one itself.'); return; }
+  if(!E.keep) DB.datesheet = DB.datesheet.filter(d=>!E.origIds.includes(d.id));
+  rows.forEach(r=>DB.datesheet.push({ id:uid(), session, term, className:E.className, subject:r.subject.trim(), date:r.date, arrivalTime:(r.arrival || '').trim(), time:(r.start || '').trim(), endTime:(r.end || '').trim() }));
+  await setData('datesheet', DB.datesheet);
+  dsSessionFilter = session; dsTermFilter = term; dsFlash = E.keep ? 'Saved as a new date sheet (' + esc(session) + (term ? ', ' + esc(term) : '') + '). The old one is still in the records, unchanged.' : 'Date sheet updated.';
+  dsEdit = null; renderDateSheet();
+  if(typeof renderAdminPanel === 'function'){ try{ renderAdminPanel(); }catch(e){} }
+}
 function setCalSessionFilter(s){ calSessionFilter=s; renderAcademicCalendar(); }
 function renderAcademicCalendar(){
   const sessions = ['All', ...Array.from(new Set(DB.academicCalendar.map(e=>e.session).filter(Boolean))).sort().reverse()];
@@ -1454,6 +1524,7 @@ function renderNotesSubjectOptions(selected){
   subjSel.innerHTML = '<option value="">Select subject</option>' + subs.map(s=>`<option ${s===selected?'selected':''}>${esc(s)}</option>`).join('');
 }
 function setDsFilter(c){ dsClassFilter=c; renderDateSheet(); }
+function setDsTermFilter(t){ dsTermFilter=t; renderDateSheet(); }
 function setDsSessionFilter(s){ dsSessionFilter=s; renderDateSheet(); }
 
 /* ---------------- STUDY NOTES ---------------- */
@@ -1878,10 +1949,11 @@ function slipCardHTML(m, cardId){
   const stu = m.student || {};
   const regNo = m.regNo || (m.session + '-' + m.rollNo);
   const subjectFilter = (m.subjects||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
-  const dsRows = DB.datesheet
+  let dsRows = DB.datesheet
     .filter(d=>d.className===m.className && d.session===m.session)
     .filter(d=> subjectFilter.length===0 || subjectFilter.includes((d.subject||'').trim().toLowerCase()))
     .sort((a,b)=> new Date(a.date)-new Date(b.date));
+  if(new Set(dsRows.map(d=>d.term||'')).size > 1){ const lastT = dsRows[dsRows.length-1].term || ''; dsRows = dsRows.filter(d=>(d.term||'') === lastT); }   // several terms in one session: the slip shows the latest term
   const dayName = d=>{ try{ return new Date(d).toLocaleDateString('en-GB',{weekday:'short'}); }catch(e){ return '-'; } };
 
   return `
@@ -2194,12 +2266,17 @@ function renderAdminPanel(){
       <p class="note-inline" style="margin:-6px 0 14px;">Pick the class, tick the subjects that need a paper scheduled, then fill in date/time for just those. Everything ticked saves at once.</p>
       <form id="dsForm">
         <div class="row-2">
+          <div class="field"><label>Term</label><select id="dsTerm"><option value="">&mdash; not set &mdash;</option>${DS_TERMS.map(t=>`<option>${t}</option>`).join('')}</select></div>
+          <div class="field"></div>
+        </div>
+        <div class="row-2">
           <div class="field"><label>Session / Year</label><input required id="dsSession" placeholder="e.g. 2026" value="${new Date().getFullYear()}"></div>
           <div class="field"><label>Class</label>
             <select required id="dsClass" onchange="renderDsSubjectPicker()">${classOptionsHTML()}</select>
           </div>
         </div>
         <div id="dsSubjectPicker"></div>
+        <label id="dsKeepWrap" style="display:none;gap:8px;align-items:flex-start;font-weight:600;margin:6px 0 10px;"><input type="checkbox" id="dsKeepOld" style="width:auto;margin-top:3px;" checked> <span>Keep the old entry exactly as it was in the records <small style="font-weight:400;color:var(--muted);">(these are saved as new entries &mdash; change the Session / Year or the Term above). Untick to update the old entry itself.</small></span></label>
         <button type="submit" class="btn-gold">Save Selected Papers</button>
       </form>
     </div>
@@ -2208,8 +2285,8 @@ function renderAdminPanel(){
       <h3>Date Sheet Records (${DB.datesheet.length})</h3>
       <p class="note-inline" style="margin:-6px 0 14px;">Every exam date ever added stays here on record, even after the paper has been held &mdash; nothing is removed automatically. Remove any entry yourself whenever you no longer need it.</p>
       ${DB.datesheet.length ? `<table>
-        <tr><th class="mono">Session</th><th>Class</th><th>Subject</th><th class="mono">Date</th><th class="mono">Reporting</th><th class="mono">Timings</th><th></th></tr>
-        ${[...DB.datesheet].sort((a,b)=> (b.session||'').localeCompare(a.session||'') || new Date(b.date)-new Date(a.date)).map(d=>`<tr><td class="mono">${esc(d.session||'-')}</td><td>${esc(d.className)}</td><td>${esc(d.subject)}</td><td class="mono">${fmtDate(d.date)}</td><td class="mono">${esc(d.arrivalTime||'-')}</td><td class="mono">${esc(d.time||'-')}${d.endTime?' to '+esc(d.endTime):''}</td><td><button class="tag-btn ghost" style="padding:4px 10px;font-size:12px;" onclick="editDatesheetEntry('${esc(d.id)}')">Edit</button> <button class="tag-btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteDatesheetEntry('${esc(d.id)}')">Remove</button></td></tr>`).join('')}
+        <tr><th class="mono">Session</th><th>Term</th><th>Class</th><th>Subject</th><th class="mono">Date</th><th class="mono">Reporting</th><th class="mono">Timings</th><th></th></tr>
+        ${[...DB.datesheet].sort((a,b)=> (b.session||'').localeCompare(a.session||'') || (a.term||'').localeCompare(b.term||'') || new Date(b.date)-new Date(a.date)).map(d=>`<tr><td class="mono">${esc(d.session||'-')}</td><td>${esc(d.term||'-')}</td><td>${esc(d.className)}</td><td>${esc(d.subject)}</td><td class="mono">${fmtDate(d.date)}</td><td class="mono">${esc(d.arrivalTime||'-')}</td><td class="mono">${esc(d.time||'-')}${d.endTime?' to '+esc(d.endTime):''}</td><td><button class="tag-btn ghost" style="padding:4px 10px;font-size:12px;" onclick="editDatesheetEntry('${esc(d.id)}')">Edit</button> <button class="tag-btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteDatesheetEntry('${esc(d.id)}')">Remove</button></td></tr>`).join('')}
       </table>` : '<div class="empty">No date sheet entries yet.</div>'}
     </div>
 
@@ -2606,11 +2683,16 @@ function renderAdminPanel(){
   document.getElementById('dsForm').addEventListener('submit', async e=>{
     e.preventDefault();
     const session = document.getElementById('dsSession').value.trim();
+    const term = document.getElementById('dsTerm').value;
     const className = document.getElementById('dsClass').value;
     const rows = document.querySelectorAll('#dsSubjectPicker .ds-subject-row');
     if(dsEditingId){
-      DB.datesheet = DB.datesheet.filter(d=>d.id!==dsEditingId);
-      dsEditingId = null;
+      const old = DB.datesheet.find(d=>d.id===dsEditingId), keepOld = document.getElementById('dsKeepOld').checked;
+      if(keepOld && old && (old.session||'') === session && (old.term||'') === term && old.className === className){
+        alert('To keep the old entry as it was, change the Session / Year or the Term first (or untick "Keep the old entry" to update it).'); return;
+      }
+      if(!keepOld) DB.datesheet = DB.datesheet.filter(d=>d.id!==dsEditingId);
+      dsEditingId = null; document.getElementById('dsKeepWrap').style.display = 'none';
     }
     let added = 0, skipped = 0;
     rows.forEach(row=>{
@@ -2619,7 +2701,7 @@ function renderAdminPanel(){
       const date = row.querySelector('.ds-date').value;
       if(!date){ skipped++; return; }
       DB.datesheet.push({
-        id: uid(), session, className, subject: row.dataset.subject, date,
+        id: uid(), session, term, className, subject: row.dataset.subject, date,
         arrivalTime: row.querySelector('.ds-arrival').value.trim(),
         time: row.querySelector('.ds-start').value.trim(),
         endTime: row.querySelector('.ds-end').value.trim()
@@ -3020,7 +3102,9 @@ function editDatesheetEntry(id){
   if(!d) return;
   dsEditingId = id;
   document.getElementById('dsSession').value = d.session || '';
+  document.getElementById('dsTerm').value = d.term || '';
   document.getElementById('dsClass').value = d.className || '';
+  document.getElementById('dsKeepWrap').style.display = 'flex'; document.getElementById('dsKeepOld').checked = true;
   renderDsSubjectPicker();
   document.querySelectorAll('#dsSubjectPicker .ds-subject-row').forEach(row=>{
     if(row.dataset.subject === d.subject){
