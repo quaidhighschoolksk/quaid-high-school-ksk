@@ -1325,6 +1325,7 @@ function lookupResult(){
 
 /* ---------------- DATE SHEET ---------------- */
 const DS_TERMS = ['1st Term','2nd Term','Annual'];
+const DS_DEF = { arr:'8:00am', start:'9:00am', end:'11:00am' };   // usual reporting time and paper timing
 let dsTermFilter = '', dsEdit = null, dsFlash = '';
 function dsScope(){
   const classes = CLASS_LIST.filter(c=>DB.datesheet.some(d=>d.className===c));
@@ -1363,6 +1364,56 @@ function renderDateSheet(){
   </div>
   <div id="dsDownloadStatus" style="margin-top:8px;"></div>`;
 }
+let dsRecClass = '', dsRecSession = 'All', dsRecTerm = 'All';
+function dsRecFilter(){ return DB.datesheet.filter(d=>d.className===dsRecClass && (dsRecSession==='All' || d.session===dsRecSession) && (dsRecTerm==='All' || (dsRecTerm==='(not set)' ? !d.term : d.term===dsRecTerm))); }
+async function dsRecApplyTimes(){
+  const g = id => (document.getElementById(id).value || '').trim(), arr = g('dsRecArr'), st = g('dsRecStart'), en = g('dsRecEnd'), rows = dsRecFilter();
+  if(!rows.length){ alert('There are no papers in this selection.'); return; }
+  if(!st){ alert('Enter the time the paper starts.'); return; }
+  const where = 'Class ' + dsRecClass + (dsRecSession !== 'All' ? ', ' + dsRecSession : ', all sessions') + (dsRecTerm !== 'All' ? ', ' + dsRecTerm : ', all terms');
+  if(!confirm('Set reporting time ' + (arr || '-') + ' and paper timing ' + st + (en ? ' to ' + en : '') + ' for all ' + rows.length + ' papers shown (' + where + ')?')) return;
+  rows.forEach(d=>{ d.arrivalTime = arr; d.time = st; d.endTime = en; });
+  await setData('datesheet', DB.datesheet);
+  dsFlash = 'Timings updated for ' + rows.length + ' papers (' + esc(where) + ').';
+  renderDateSheet(); const w = document.getElementById('dsRecWrap'); if(w) w.innerHTML = dsRecordsHTML();
+}
+function dsRecordsHTML(){
+  const all = DB.datesheet;
+  if(!all.length) return '<div class="empty">No date sheet entries yet.</div>';
+  const classes = CLASS_LIST.filter(c=>all.some(d=>d.className===c));
+  if(!classes.includes(dsRecClass)) dsRecClass = classes[0] || '';
+  const inClass = all.filter(d=>d.className===dsRecClass);
+  const sessions = ['All', ...Array.from(new Set(inClass.map(d=>d.session).filter(Boolean))).sort().reverse()];
+  if(!sessions.includes(dsRecSession)) dsRecSession = 'All';
+  const inSess = inClass.filter(d=>dsRecSession==='All' || d.session===dsRecSession);
+  const terms = ['All'].concat(DS_TERMS.filter(t=>inSess.some(d=>d.term===t)), Array.from(new Set(inSess.map(d=>d.term).filter(t=>t && !DS_TERMS.includes(t)))), inSess.some(d=>!d.term) ? ['(not set)'] : []);
+  if(!terms.includes(dsRecTerm)) dsRecTerm = 'All';
+  const rows = inSess.filter(d=> dsRecTerm==='All' || (dsRecTerm==='(not set)' ? !d.term : d.term===dsRecTerm))
+    .sort((a,b)=> (b.session||'').localeCompare(a.session||'') || (a.term||'').localeCompare(b.term||'') || new Date(a.date)-new Date(b.date));
+  const chip = (kind, v, cur, label) => `<button type="button" class="chip ${v===cur?'active':''}" data-v="${esc(v)}" onclick="setDsRec('${kind}',this.dataset.v)">${esc(label)}</button>`;
+  return `<div style="margin-bottom:8px;"><b style="font-size:12px;">Class</b><div class="filter-chips" style="margin:4px 0 8px;">${classes.map(c=>chip('class', c, dsRecClass, c)).join('')}</div>
+      <b style="font-size:12px;">Session</b><div class="filter-chips" style="margin:4px 0 8px;">${sessions.map(x=>chip('session', x, dsRecSession, x==='All'?'All Sessions':x)).join('')}</div>
+      ${terms.length > 1 ? `<b style="font-size:12px;">Term</b><div class="filter-chips" style="margin:4px 0 8px;">${terms.map(x=>chip('term', x, dsRecTerm, x==='All'?'All Terms':x)).join('')}</div>` : ''}
+      <div class="note-inline" style="margin:4px 0 0;">Showing ${rows.length} of ${all.length} entries &mdash; Class ${esc(dsRecClass)}</div></div>
+    ${rows.length ? `<div style="border:1px solid var(--line);border-radius:8px;background:#f7f9fc;padding:10px 12px;margin:0 0 12px;">
+      <b>Set the timings once for all ${rows.length} papers shown</b> <small style="color:var(--muted);">(this class${dsRecTerm!=='All'?', '+esc(dsRecTerm):''}${dsRecSession!=='All'?', '+esc(dsRecSession):''})</small>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:8px 0;">
+        <div class="field" style="margin:0;"><label>Reporting time</label><input id="dsRecArr" value="${esc(rows[0].arrivalTime || DS_DEF.arr)}"></div>
+        <div class="field" style="margin:0;"><label>Paper starts</label><input id="dsRecStart" value="${esc(rows[0].time || DS_DEF.start)}"></div>
+        <div class="field" style="margin:0;"><label>Paper ends</label><input id="dsRecEnd" value="${esc(rows[0].endTime || DS_DEF.end)}"></div>
+      </div>
+      <button type="button" class="tag-btn" onclick="dsRecApplyTimes()">Apply to all ${rows.length} papers shown</button></div>` : ''}
+    ${rows.length ? `<table>
+      <tr><th class="mono">Session</th><th>Term</th><th>Class</th><th>Subject</th><th class="mono">Date</th><th class="mono">Reporting</th><th class="mono">Timings</th><th></th></tr>
+      ${rows.map(d=>`<tr><td class="mono">${esc(d.session||'-')}</td><td>${esc(d.term||'-')}</td><td>${esc(d.className)}</td><td>${esc(d.subject)}</td><td class="mono">${fmtDate(d.date)}</td><td class="mono">${esc(d.arrivalTime||'-')}</td><td class="mono">${esc(d.time||'-')}${d.endTime?' to '+esc(d.endTime):''}</td><td><button class="tag-btn ghost" style="padding:4px 10px;font-size:12px;" onclick="editDatesheetEntry('${esc(d.id)}')">Edit</button> <button class="tag-btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteDatesheetEntry('${esc(d.id)}')">Remove</button></td></tr>`).join('')}
+    </table>` : '<div class="empty">No entries for this selection.</div>'}`;
+}
+function setDsRec(kind, v){
+  if(kind === 'class'){ dsRecClass = v; dsRecSession = 'All'; dsRecTerm = 'All'; }
+  else if(kind === 'session'){ dsRecSession = v; dsRecTerm = 'All'; }
+  else dsRecTerm = v;
+  const w = document.getElementById('dsRecWrap'); if(w) w.innerHTML = dsRecordsHTML();
+}
 function dsStartEdit(){
   if(!isAdmin) return;
   const sc = dsScope(), rows = sc.rows;
@@ -1370,6 +1421,7 @@ function dsStartEdit(){
   const sess = Array.from(new Set(rows.map(r=>r.session)));
   if(sess.length > 1){ alert('This list mixes several sessions. Choose one session at the top (not "All Sessions") and then press Edit.'); return; }
   dsEdit = { className:dsClassFilter, origIds:rows.map(r=>r.id), origSession:rows[0].session || '', origTerm:rows[0].term || '', session:rows[0].session || '', term:rows[0].term || '', keep:true,
+    allArr:rows[0].arrivalTime || DS_DEF.arr, allStart:rows[0].time || DS_DEF.start, allEnd:rows[0].endTime || DS_DEF.end,
     rows:rows.map(r=>({ subject:r.subject || '', date:r.date || '', arrival:r.arrivalTime || '', start:r.time || '', end:r.endTime || '' })) };
   renderDateSheet();
 }
@@ -1385,6 +1437,14 @@ function renderDateSheetEdit(){
       <div class="field"><label>Term</label><select onchange="dsEdit.term=this.value"><option value="" ${!E.term?'selected':''}>&mdash; not set &mdash;</option>${DS_TERMS.map(t=>`<option ${E.term===t?'selected':''}>${esc(t)}</option>`).join('')}${E.term && !DS_TERMS.includes(E.term) ? `<option selected>${esc(E.term)}</option>` : ''}</select></div>
     </div>
     <label style="display:flex;gap:8px;align-items:flex-start;font-weight:600;margin:0 0 10px;"><input type="checkbox" style="width:auto;margin-top:3px;" ${E.keep?'checked':''} onchange="dsEdit.keep=this.checked"> <span>Keep the old date sheet exactly as it was in the records <small style="font-weight:400;color:var(--muted);">(your changes are saved as a new date sheet &mdash; so change the Session or Term above). Untick to update the old one itself.</small></span></label>
+    <div style="border:1px solid var(--line);border-radius:8px;background:#fff;padding:10px 12px;margin:0 0 10px;">
+      <b>Timings for the whole class</b> <small style="color:var(--muted);">&mdash; set once and press Apply: every paper below gets it (you can still change one paper afterwards).</small>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr) auto;gap:10px;margin-top:8px;align-items:end;">
+        <div class="field" style="margin:0;"><label>Reporting time</label><input value="${esc(E.allArr)}" oninput="dsEdit.allArr=this.value"></div>
+        <div class="field" style="margin:0;"><label>Paper starts</label><input value="${esc(E.allStart)}" oninput="dsEdit.allStart=this.value"></div>
+        <div class="field" style="margin:0;"><label>Paper ends</label><input value="${esc(E.allEnd)}" oninput="dsEdit.allEnd=this.value"></div>
+        <button type="button" class="tag-btn" onclick="dsEditApplyAll()">Apply to all papers</button>
+      </div></div>
     <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
       <tr><th style="text-align:left;">Subject</th><th>Date</th><th>Reporting time</th><th>Start</th><th>End</th><th></th></tr>
       ${E.rows.map((r,i)=>`<tr>
@@ -1401,7 +1461,8 @@ function renderDateSheetEdit(){
       <button type="button" class="tag-btn ghost" onclick="dsEditCancel()">Cancel</button>
     </div></div>`;
 }
-function dsEditAdd(){ dsEdit.rows.push({ subject:'', date:'', arrival:'', start:'', end:'' }); renderDateSheet(); }
+function dsEditApplyAll(){ const E = dsEdit; E.rows.forEach(r=>{ r.arrival = E.allArr; r.start = E.allStart; r.end = E.allEnd; }); renderDateSheet(); }
+function dsEditAdd(){ const E = dsEdit; E.rows.push({ subject:'', date:'', arrival:E.allArr || DS_DEF.arr, start:E.allStart || DS_DEF.start, end:E.allEnd || DS_DEF.end }); renderDateSheet(); }
 function dsEditRemove(i){ dsEdit.rows.splice(i, 1); renderDateSheet(); }
 function dsEditCancel(){ dsEdit = null; renderDateSheet(); }
 async function dsEditSave(){
@@ -2275,6 +2336,14 @@ function renderAdminPanel(){
             <select required id="dsClass" onchange="renderDsSubjectPicker()">${classOptionsHTML()}</select>
           </div>
         </div>
+        <div style="border:1px solid var(--line);border-radius:8px;background:#f7f9fc;padding:10px 12px;margin:0 0 12px;">
+          <b>Timings for the whole class</b> <small style="color:var(--muted);">&mdash; set once, it is used for every paper you tick below (you can still change one paper if needed).</small>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:8px;">
+            <div class="field" style="margin:0;"><label>Reporting time</label><input id="dsAllArr" value="${DS_DEF.arr}" oninput="dsApplyAllTimes()"></div>
+            <div class="field" style="margin:0;"><label>Paper starts</label><input id="dsAllStart" value="${DS_DEF.start}" oninput="dsApplyAllTimes()"></div>
+            <div class="field" style="margin:0;"><label>Paper ends</label><input id="dsAllEnd" value="${DS_DEF.end}" oninput="dsApplyAllTimes()"></div>
+          </div>
+        </div>
         <div id="dsSubjectPicker"></div>
         <label id="dsKeepWrap" style="display:none;gap:8px;align-items:flex-start;font-weight:600;margin:6px 0 10px;"><input type="checkbox" id="dsKeepOld" style="width:auto;margin-top:3px;" checked> <span>Keep the old entry exactly as it was in the records <small style="font-weight:400;color:var(--muted);">(these are saved as new entries &mdash; change the Session / Year or the Term above). Untick to update the old entry itself.</small></span></label>
         <button type="submit" class="btn-gold">Save Selected Papers</button>
@@ -2284,10 +2353,7 @@ function renderAdminPanel(){
     <div class="admin-block">
       <h3>Date Sheet Records (${DB.datesheet.length})</h3>
       <p class="note-inline" style="margin:-6px 0 14px;">Every exam date ever added stays here on record, even after the paper has been held &mdash; nothing is removed automatically. Remove any entry yourself whenever you no longer need it.</p>
-      ${DB.datesheet.length ? `<table>
-        <tr><th class="mono">Session</th><th>Term</th><th>Class</th><th>Subject</th><th class="mono">Date</th><th class="mono">Reporting</th><th class="mono">Timings</th><th></th></tr>
-        ${[...DB.datesheet].sort((a,b)=> (b.session||'').localeCompare(a.session||'') || (a.term||'').localeCompare(b.term||'') || new Date(b.date)-new Date(a.date)).map(d=>`<tr><td class="mono">${esc(d.session||'-')}</td><td>${esc(d.term||'-')}</td><td>${esc(d.className)}</td><td>${esc(d.subject)}</td><td class="mono">${fmtDate(d.date)}</td><td class="mono">${esc(d.arrivalTime||'-')}</td><td class="mono">${esc(d.time||'-')}${d.endTime?' to '+esc(d.endTime):''}</td><td><button class="tag-btn ghost" style="padding:4px 10px;font-size:12px;" onclick="editDatesheetEntry('${esc(d.id)}')">Edit</button> <button class="tag-btn danger" style="padding:4px 10px;font-size:12px;" onclick="deleteDatesheetEntry('${esc(d.id)}')">Remove</button></td></tr>`).join('')}
-      </table>` : '<div class="empty">No date sheet entries yet.</div>'}
+      <div id="dsRecWrap">${dsRecordsHTML()}</div>
     </div>
 
     <div class="admin-block">
@@ -2709,6 +2775,7 @@ function renderAdminPanel(){
       added++;
     });
     await setData('datesheet', DB.datesheet);
+    dsRecClass = className; dsRecSession = 'All'; dsRecTerm = 'All';
     renderDateSheet();
     if(skipped>0){ alert(skipped+' ticked subject(s) were skipped because no date was given.'); }
     renderAdminPanel();
@@ -2901,6 +2968,8 @@ function renderDsSubjectPicker(){
     wrap.innerHTML = '<p class="note-inline">No subjects added for this class yet &mdash; add some in "Manage Subjects" below.</p>';
     return;
   }
+  const gv = (id, def) => { const e = document.getElementById(id); return (e && e.value.trim()) ? e.value.trim() : def; };
+  const tArr = gv('dsAllArr', DS_DEF.arr), tStart = gv('dsAllStart', DS_DEF.start), tEnd = gv('dsAllEnd', DS_DEF.end);
   wrap.innerHTML = subs.map(s=>`
     <div class="ds-subject-row" data-subject="${esc(s)}">
       <label style="display:flex;align-items:center;gap:8px;font-weight:600;">
@@ -2909,14 +2978,20 @@ function renderDsSubjectPicker(){
       <div class="ds-subject-fields" style="display:none;">
         <div class="row-2">
           <div class="field"><label>Date</label><input type="date" class="ds-date"></div>
-          <div class="field"><label>Reporting Time</label><input class="ds-arrival" placeholder="e.g. 1:30 PM"></div>
+          <div class="field"><label>Reporting Time</label><input class="ds-arrival" value="${esc(tArr)}" oninput="this.dataset.manual='1'" placeholder="e.g. 8:00am"></div>
         </div>
         <div class="row-2">
-          <div class="field"><label>Paper Start Time</label><input class="ds-start" placeholder="e.g. 2:00 PM"></div>
-          <div class="field"><label>Paper End Time (optional)</label><input class="ds-end" placeholder="e.g. 4:30 PM"></div>
+          <div class="field"><label>Paper Start Time</label><input class="ds-start" value="${esc(tStart)}" oninput="this.dataset.manual='1'" placeholder="e.g. 9:00am"></div>
+          <div class="field"><label>Paper End Time (optional)</label><input class="ds-end" value="${esc(tEnd)}" oninput="this.dataset.manual='1'" placeholder="e.g. 11:00am"></div>
         </div>
       </div>
     </div>`).join('');
+}
+function dsApplyAllTimes(){          // change the class-wide timing once -> every paper that was not changed by hand follows it
+  const v = id => (document.getElementById(id) || {}).value || '';
+  document.querySelectorAll('#dsSubjectPicker .ds-subject-row').forEach(row=>{
+    [['.ds-arrival','dsAllArr'],['.ds-start','dsAllStart'],['.ds-end','dsAllEnd']].forEach(p=>{ const i = row.querySelector(p[0]); if(i && i.dataset.manual !== '1') i.value = v(p[1]); });
+  });
 }
 function toggleDsSubjectFields(checkbox){
   const fieldsDiv = checkbox.closest('.ds-subject-row').querySelector('.ds-subject-fields');
@@ -3112,9 +3187,9 @@ function editDatesheetEntry(id){
       cb.checked = true;
       toggleDsSubjectFields(cb);
       row.querySelector('.ds-date').value = d.date || '';
-      row.querySelector('.ds-arrival').value = d.arrivalTime || '';
-      row.querySelector('.ds-start').value = d.time || '';
-      row.querySelector('.ds-end').value = d.endTime || '';
+      row.querySelector('.ds-arrival').value = d.arrivalTime || ''; row.querySelector('.ds-arrival').dataset.manual = '1';
+      row.querySelector('.ds-start').value = d.time || ''; row.querySelector('.ds-start').dataset.manual = '1';
+      row.querySelector('.ds-end').value = d.endTime || ''; row.querySelector('.ds-end').dataset.manual = '1';
     }
   });
   document.getElementById('dsForm').scrollIntoView({behavior:'smooth', block:'center'});
